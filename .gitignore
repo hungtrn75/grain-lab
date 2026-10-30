@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+
+# Xcode & Swift Package Manager
+/.build/
+/Packages
+xcuserdata/
+DerivedData/
+*.app
+*.dSYM
+.swiftpm/
+
+# User configurations & secrets
+.netrc
+*.xcuserdatad
