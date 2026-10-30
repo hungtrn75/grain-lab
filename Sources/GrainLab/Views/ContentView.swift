@@ -79,29 +79,44 @@ public struct ContentView: View {
         let width: CGFloat = 1800
         let height: CGFloat = 1200
         
-        // Generate a smooth photographic landscape gradient with warm sunset tones
-        guard let gradFilter = CIFilter(name: "CILinearGradient") else { return nil }
-        gradFilter.setValue(CIVector(x: 0, y: 0), forKey: "inputPoint0")
-        gradFilter.setValue(CIVector(x: width, y: height), forKey: "inputPoint1")
-        gradFilter.setValue(CIColor(red: 0.18, green: 0.22, blue: 0.35), forKey: "inputColor0") // Deep twilight navy
-        gradFilter.setValue(CIColor(red: 0.88, green: 0.58, blue: 0.42), forKey: "inputColor1") // Warm golden hour
+        // Generate a natural photographic landscape with rich sky blue, natural greens, and neutral tones
+        // Sky to horizon gradient
+        guard let skyFilter = CIFilter(name: "CILinearGradient") else { return nil }
+        skyFilter.setValue(CIVector(x: width * 0.5, y: height), forKey: "inputPoint0")
+        skyFilter.setValue(CIVector(x: width * 0.5, y: height * 0.4), forKey: "inputPoint1")
+        skyFilter.setValue(CIColor(red: 0.35, green: 0.62, blue: 0.88), forKey: "inputColor0") // Deep natural blue sky
+        skyFilter.setValue(CIColor(red: 0.85, green: 0.89, blue: 0.92), forKey: "inputColor1") // Soft horizon
         
-        guard let base = gradFilter.outputImage?.cropped(to: CGRect(x: 0, y: 0, width: width, height: height)) else {
+        guard let sky = skyFilter.outputImage?.cropped(to: CGRect(x: 0, y: 0, width: width, height: height)) else {
             return nil
         }
         
-        // Add a gentle radial highlight (sun glow)
-        if let radial = CIFilter(name: "CIRadialGradient") {
-            radial.setValue(CIVector(x: width * 0.65, y: height * 0.55), forKey: "inputCenter")
-            radial.setValue(100, forKey: "inputRadius0")
-            radial.setValue(700, forKey: "inputRadius1")
-            radial.setValue(CIColor(red: 1.0, green: 0.85, blue: 0.65, alpha: 0.7), forKey: "inputColor0")
-            radial.setValue(CIColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0.0), forKey: "inputColor1")
-            if let glow = radial.outputImage?.cropped(to: base.extent) {
-                return glow.composited(over: base)
+        // Rolling green hills / landscape at bottom
+        guard let groundFilter = CIFilter(name: "CILinearGradient") else { return sky }
+        groundFilter.setValue(CIVector(x: width * 0.5, y: height * 0.42), forKey: "inputPoint0")
+        groundFilter.setValue(CIVector(x: width * 0.5, y: 0), forKey: "inputPoint1")
+        groundFilter.setValue(CIColor(red: 0.28, green: 0.52, blue: 0.25, alpha: 0.95), forKey: "inputColor0") // Sunlit green meadow
+        groundFilter.setValue(CIColor(red: 0.14, green: 0.32, blue: 0.18, alpha: 1.0), forKey: "inputColor1")  // Deep forest green
+        
+        let ground = groundFilter.outputImage?.cropped(to: CGRect(x: 0, y: 0, width: width, height: height * 0.42))
+        
+        var combined = sky
+        if let g = ground {
+            combined = g.composited(over: sky)
+        }
+        
+        // Subtle soft cloud highlight
+        if let cloud = CIFilter(name: "CIRadialGradient") {
+            cloud.setValue(CIVector(x: width * 0.40, y: height * 0.65), forKey: "inputCenter")
+            cloud.setValue(50, forKey: "inputRadius0")
+            cloud.setValue(450, forKey: "inputRadius1")
+            cloud.setValue(CIColor(red: 0.98, green: 0.98, blue: 1.0, alpha: 0.45), forKey: "inputColor0")
+            cloud.setValue(CIColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.0), forKey: "inputColor1")
+            if let cloudGlow = cloud.outputImage?.cropped(to: combined.extent) {
+                combined = cloudGlow.composited(over: combined)
             }
         }
         
-        return base
+        return combined
     }
 }

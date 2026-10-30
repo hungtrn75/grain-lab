@@ -236,64 +236,43 @@ extension FilmPreset {
     
     public static let kodakColorPro = FilmPreset(
         name: "Kodak Color Pro",
-        temperature: 5600,
-        tint: 2.0,
-        exposure: 0.1,
-        shadows: 0.12,
-        highlights: -0.05,
-        contrast: 1.10,
-        toneCurvePoints: [
-            CGPoint(x: 0.00, y: 0.02),
-            CGPoint(x: 0.25, y: 0.22),
-            CGPoint(x: 0.50, y: 0.50),
-            CGPoint(x: 0.75, y: 0.80),
-            CGPoint(x: 1.00, y: 0.99)
-        ],
+        temperature: 5500,
+        tint: 0.0,
+        exposure: 0.0,
+        shadows: 0.0,
+        highlights: 0.0,
+        contrast: 1.0,
         lutFileName: "Presetpro_Kodak_Color.cube",
         lutIntensity: 1.0,
-        grainIntensity: 0.24,
+        grainIntensity: 0.20,
         grainSize: 1.2
     )
     
     public static let kodakGold200 = FilmPreset(
         name: "Kodak Gold 200",
-        temperature: 5850,
-        tint: 3.0,
-        exposure: 0.15,
-        shadows: 0.10,
-        highlights: -0.08,
-        contrast: 1.12,
-        toneCurvePoints: [
-            CGPoint(x: 0.00, y: 0.03),
-            CGPoint(x: 0.25, y: 0.23),
-            CGPoint(x: 0.50, y: 0.51),
-            CGPoint(x: 0.75, y: 0.79),
-            CGPoint(x: 1.00, y: 0.98)
-        ],
+        temperature: 5500,
+        tint: 0.0,
+        exposure: 0.0,
+        shadows: 0.0,
+        highlights: 0.0,
+        contrast: 1.0,
         lutFileName: "Kodak_Gold_200.cube",
-        lutIntensity: 0.95,
-        grainIntensity: 0.30,
-        grainSize: 1.3
+        lutIntensity: 1.0,
+        grainIntensity: 0.22,
+        grainSize: 1.2
     )
     
     public static let fujiClassicChrome = FilmPreset(
         name: "Fujifilm Classic Chrome",
-        temperature: 5350,
-        tint: -2.0,
-        exposure: 0.05,
-        shadows: -0.05,
-        highlights: 0.05,
-        contrast: 1.18,
-        toneCurvePoints: [
-            CGPoint(x: 0.00, y: 0.01),
-            CGPoint(x: 0.25, y: 0.21),
-            CGPoint(x: 0.50, y: 0.50),
-            CGPoint(x: 0.75, y: 0.81),
-            CGPoint(x: 1.00, y: 0.99)
-        ],
+        temperature: 5500,
+        tint: 0.0,
+        exposure: 0.0,
+        shadows: 0.0,
+        highlights: 0.0,
+        contrast: 1.0,
         lutFileName: "Fuji_Classic_Chrome.cube",
         lutIntensity: 1.0,
-        grainIntensity: 0.22,
+        grainIntensity: 0.18,
         grainSize: 1.2
     )
     

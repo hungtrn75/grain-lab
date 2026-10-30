@@ -121,8 +121,9 @@ public final class CoreImageEngine: @unchecked Sendable {
         // Step 5: Film Grain (Noise + Soft Light Blend)
         currentImage = applyFilmGrain(to: currentImage, preset: preset)
         
-        // Step 6: Render to CGImage on GPU
-        return context.createCGImage(currentImage, from: currentImage.extent)
+        // Step 6: Render to CGImage on GPU in standard sRGB color space
+        let srgb = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        return context.createCGImage(currentImage, from: currentImage.extent, format: .RGBA8, colorSpace: srgb)
     }
     
     // MARK: - Pipeline Steps
@@ -228,7 +229,19 @@ public final class CoreImageEngine: @unchecked Sendable {
         
         do {
             let lutData = try LUTParser.shared.parse(from: lutURL)
-            guard let cubeFilter = CIFilter(name: "CIColorCube") else { return image }
+            let srgb = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+            
+            // Prefer CIColorCubeWithColorSpace so Core Image transforms pixels to sRGB
+            // before sampling the .cube 3D LUT, avoiding linear-gamma color/yellow distortion
+            let cubeFilter: CIFilter
+            if let filterWithSpace = CIFilter(name: "CIColorCubeWithColorSpace") {
+                filterWithSpace.setValue(srgb, forKey: "inputColorSpace")
+                cubeFilter = filterWithSpace
+            } else if let standardFilter = CIFilter(name: "CIColorCube") {
+                cubeFilter = standardFilter
+            } else {
+                return image
+            }
             
             cubeFilter.setValue(image, forKey: kCIInputImageKey)
             cubeFilter.setValue(lutData.dimension, forKey: "inputCubeDimension")
