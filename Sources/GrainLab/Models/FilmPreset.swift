@@ -276,11 +276,33 @@ extension FilmPreset {
         grainSize: 1.3
     )
     
+    public static let fujiClassicChrome = FilmPreset(
+        name: "Fujifilm Classic Chrome",
+        temperature: 5350,
+        tint: -2.0,
+        exposure: 0.05,
+        shadows: -0.05,
+        highlights: 0.05,
+        contrast: 1.18,
+        toneCurvePoints: [
+            CGPoint(x: 0.00, y: 0.01),
+            CGPoint(x: 0.25, y: 0.21),
+            CGPoint(x: 0.50, y: 0.50),
+            CGPoint(x: 0.75, y: 0.81),
+            CGPoint(x: 1.00, y: 0.99)
+        ],
+        lutFileName: "Fuji_Classic_Chrome.cube",
+        lutIntensity: 1.0,
+        grainIntensity: 0.22,
+        grainSize: 1.2
+    )
+    
     public static let builtInPresets: [FilmPreset] = [
         defaultPreset,
         kodakPortra400,
         kodakGold200,
         kodakColorPro,
+        fujiClassicChrome,
         fujiPro400H,
         ilfordHP5,
         cinestill800T,
