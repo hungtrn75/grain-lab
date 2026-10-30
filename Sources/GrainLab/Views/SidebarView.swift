@@ -278,6 +278,7 @@ public struct SidebarView: View {
     }
     
     private func filmStockIcon(for name: String) -> String {
+        if name.contains("Color Pro") { return "camera.aperture" }
         if name.contains("Portra") { return "sun.max.fill" }
         if name.contains("Pro") { return "leaf.fill" }
         if name.contains("HP5") || name.contains("B&W") { return "circle.lefthalf.filled" }

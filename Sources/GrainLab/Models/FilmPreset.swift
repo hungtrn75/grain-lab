@@ -234,9 +234,31 @@ extension FilmPreset {
         grainSize: 1.4
     )
     
+    public static let kodakColorPro = FilmPreset(
+        name: "Kodak Color Pro",
+        temperature: 5600,
+        tint: 2.0,
+        exposure: 0.1,
+        shadows: 0.12,
+        highlights: -0.05,
+        contrast: 1.10,
+        toneCurvePoints: [
+            CGPoint(x: 0.00, y: 0.02),
+            CGPoint(x: 0.25, y: 0.22),
+            CGPoint(x: 0.50, y: 0.50),
+            CGPoint(x: 0.75, y: 0.80),
+            CGPoint(x: 1.00, y: 0.99)
+        ],
+        lutFileName: "Presetpro_Kodak_Color.cube",
+        lutIntensity: 1.0,
+        grainIntensity: 0.24,
+        grainSize: 1.2
+    )
+    
     public static let builtInPresets: [FilmPreset] = [
         defaultPreset,
         kodakPortra400,
+        kodakColorPro,
         fujiPro400H,
         ilfordHP5,
         cinestill800T,
