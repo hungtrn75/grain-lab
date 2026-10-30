@@ -255,9 +255,31 @@ extension FilmPreset {
         grainSize: 1.2
     )
     
+    public static let kodakGold200 = FilmPreset(
+        name: "Kodak Gold 200",
+        temperature: 5850,
+        tint: 3.0,
+        exposure: 0.15,
+        shadows: 0.10,
+        highlights: -0.08,
+        contrast: 1.12,
+        toneCurvePoints: [
+            CGPoint(x: 0.00, y: 0.03),
+            CGPoint(x: 0.25, y: 0.23),
+            CGPoint(x: 0.50, y: 0.51),
+            CGPoint(x: 0.75, y: 0.79),
+            CGPoint(x: 1.00, y: 0.98)
+        ],
+        lutFileName: "Kodak_Gold_200.cube",
+        lutIntensity: 0.95,
+        grainIntensity: 0.30,
+        grainSize: 1.3
+    )
+    
     public static let builtInPresets: [FilmPreset] = [
         defaultPreset,
         kodakPortra400,
+        kodakGold200,
         kodakColorPro,
         fujiPro400H,
         ilfordHP5,
