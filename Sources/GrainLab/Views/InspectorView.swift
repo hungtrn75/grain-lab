@@ -1,64 +1,92 @@
 import SwiftUI
 import AppKit
 
+private enum InspectorTab: String, CaseIterable, Identifiable {
+    case edit = "Edit", looks = "Looks", layers = "Layers", crop = "Crop"
+    var id: String { rawValue }
+}
+
 public struct InspectorView: View {
     @ObservedObject var viewModel: EditorViewModel
     @ObservedObject var lutRegistry = LUTRegistry.shared
     
     @State private var showExportSheet = false
     @State private var showLUTBrowser = false
+    @AppStorage("inspector.activeTab") private var selectedTab: InspectorTab = .edit
+    @AppStorage("inspector.histogramExpanded") private var histogramExpanded = false
+    @AppStorage("inspector.basicExpanded") private var basicExpanded = true
+    @AppStorage("inspector.curveExpanded") private var curveExpanded = false
+    @AppStorage("inspector.lutExpanded") private var lutExpanded = true
+    @AppStorage("inspector.lightExpanded") private var lightExpanded = false
+    @AppStorage("inspector.grainExpanded") private var grainExpanded = false
     
     public init(viewModel: EditorViewModel) {
         self.viewModel = viewModel
     }
     
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // MARK: - 1. Live Histogram
-                HistogramView(
-                    luma: viewModel.histogramLuma,
-                    red: viewModel.histogramRed,
-                    green: viewModel.histogramGreen,
-                    blue: viewModel.histogramBlue
-                )
-                
-                Divider()
-                
-                // MARK: - 2. Basic Adjustments (WB & Exposure)
-                GeometryEditorView(viewModel: viewModel)
-                Divider()
-                basicAdjustmentsSection
-                
-                Divider()
-                
-                // MARK: - 3. Tone Curve
-                ToneCurveEditorView(points: $viewModel.currentPreset.toneCurvePoints)
-                
-                Divider()
-                
-                // MARK: - 4. Film Simulation (3D LUT)
-                filmSimulationSection
-                
-                Divider()
-                
-                LayersView(viewModel: viewModel)
-                Divider()
-
-                // MARK: - 5. Film Grain Effects
-                lightEffectsSection
-                Divider()
-                filmGrainSection
-                
-                Divider()
-                
-                // MARK: - 6. Actions (Export & Reset)
-                actionsSection
+        VStack(spacing: 0) {
+            VStack(spacing: 10) {
+                section("Histogram", icon: "chart.bar.xaxis", summary: "RGB / Luma", expanded: $histogramExpanded) {
+                    HistogramView(luma: viewModel.histogramLuma, red: viewModel.histogramRed,
+                                  green: viewModel.histogramGreen, blue: viewModel.histogramBlue)
+                }
+                Picker("Tool group", selection: $selectedTab) {
+                    ForEach(InspectorTab.allCases) { tab in Text(tab.rawValue).tag(tab) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .help("Edit: light and WB • Looks: LUT and effects • Layers: local masks • Crop: framing")
             }
-            .padding(16)
+            .padding(12)
+            Divider()
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Color.clear.frame(height: 0).id("inspectorTop")
+                        switch selectedTab {
+                        case .edit:
+                            section("Light & White Balance", icon: "slider.horizontal.3",
+                                    summary: String(format: "%+.2f EV", viewModel.currentPreset.exposure), expanded: $basicExpanded) {
+                                basicAdjustmentsSection
+                            }
+                            section("Tone Curve", icon: "point.topleft.down.to.point.bottomright.curvepath", summary: nil, expanded: $curveExpanded) {
+                                ToneCurveEditorView(points: $viewModel.currentPreset.toneCurvePoints)
+                            }
+                        case .looks:
+                            section("Film LUT", icon: "camera.filters", summary: viewModel.currentPreset.lutFileName == nil ? "Off" : "Active", expanded: $lutExpanded) {
+                                filmSimulationSection
+                            }
+                            section("Halation & Bloom", icon: "sun.haze", summary: lightEffectsSummary, expanded: $lightExpanded) {
+                                lightEffectsSection
+                            }
+                            section("Film Grain", icon: "circle.dotted", summary: "\(Int(viewModel.currentPreset.grainIntensity * 100))%", expanded: $grainExpanded) {
+                                filmGrainSection
+                            }
+                        case .layers:
+                            LayersView(viewModel: viewModel)
+                        case .crop:
+                            GeometryEditorView(viewModel: viewModel)
+                        }
+                    }
+                    .padding(12)
+                }
+                .onChange(of: selectedTab) { _ in proxy.scrollTo("inspectorTop", anchor: .top) }
+            }
+            Divider()
+            actionsSection.padding(12).background(.bar)
         }
         .frame(minWidth: 280, idealWidth: 320)
-
+        .onChange(of: selectedTab) { tab in
+            if tab != .layers { viewModel.isEditingMask = false }
+            if tab != .edit, viewModel.isPickingWhiteBalance { viewModel.toggleWhiteBalancePicker() }
+        }
+        .onChange(of: viewModel.isEditingMask) { editing in
+            if editing { selectedTab = .layers }
+        }
+        .onChange(of: viewModel.isPickingWhiteBalance) { picking in
+            if picking { selectedTab = .edit; basicExpanded = true }
+        }
         .sheet(isPresented: $showLUTBrowser) {
             LUTBrowserView(viewModel: viewModel)
         }
@@ -67,11 +95,33 @@ public struct InspectorView: View {
         }
     }
     
+    private var lightEffectsSummary: String {
+        let preset = viewModel.currentPreset
+        return preset.halationAmount == 0 && preset.bloomAmount == 0 ? "Off" : "Active"
+    }
+
+    private func section<Content: View>(_ title: String, icon: String, summary: String?, expanded: Binding<Bool>,
+                                       @ViewBuilder content: @escaping () -> Content) -> some View {
+        DisclosureGroup(isExpanded: expanded) {
+            content().padding(.top, 10)
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: icon).foregroundColor(.secondary).frame(width: 16)
+                Text(title).fontWeight(.medium)
+                Spacer(minLength: 4)
+                if let summary { Text(summary).font(.caption2).foregroundColor(.secondary) }
+            }.font(.caption)
+        }
+        .padding(10)
+        .background(Color.secondary.opacity(0.06))
+        .cornerRadius(8)
+    }
+
     // MARK: - Basic Adjustments Section
     private var basicAdjustmentsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("BASIC & WHITE BALANCE")
+                Text("White Balance & Tone")
                     .font(.caption2)
                     .fontWeight(.semibold)
                     .foregroundColor(.secondary)
@@ -184,7 +234,7 @@ public struct InspectorView: View {
     private var filmSimulationSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("FILM SIMULATION (3D LUT)")
+                Text("LUT Library")
                     .font(.caption2)
                     .fontWeight(.semibold)
                     .foregroundColor(.secondary)
@@ -241,7 +291,7 @@ public struct InspectorView: View {
     private var lightEffectsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("HALATION & BLOOM").font(.caption2).fontWeight(.semibold).foregroundColor(.secondary)
+                Text("Light Diffusion").font(.caption2).fontWeight(.semibold).foregroundColor(.secondary)
                 Spacer()
                 Button("Reset") { viewModel.currentPreset.lightEffects = nil }.font(.caption2)
             }
@@ -271,7 +321,7 @@ public struct InspectorView: View {
     private var filmGrainSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("FILM GRAIN & TEXTURE")
+                Text("Grain Texture")
                     .font(.caption2)
                     .fontWeight(.semibold)
                     .foregroundColor(.secondary)
@@ -314,26 +364,26 @@ public struct InspectorView: View {
     
     // MARK: - Actions Section
     private var actionsSection: some View {
-        VStack(spacing: 10) {
+        HStack(spacing: 8) {
             Button(action: { showExportSheet = true }) {
-                Label("Export Master Photo...", systemImage: "square.and.arrow.up")
+                Label("Export Photo…", systemImage: "square.and.arrow.up")
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .disabled(viewModel.displayImage == nil)
-            
-            Button("Reset All to Default") {
-                viewModel.resetAdjustments()
+            Menu {
+                Button("Reset All Adjustments", role: .destructive) { viewModel.resetAdjustments() }
+                    .disabled(viewModel.displayImage == nil)
+            } label: {
+                Image(systemName: "ellipsis.circle").font(.title3)
             }
-            .buttonStyle(.plain)
-            .font(.caption)
-            .foregroundColor(.secondary)
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("More actions: reset all adjustments")
         }
-        .padding(.top, 4)
     }
-    
+
     // MARK: - Reusable Slider Row
     private func sliderRow(
         title: String,

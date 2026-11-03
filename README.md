@@ -162,3 +162,15 @@ Mỗi layer có tên, bật/tắt, **Layer Opacity**, **Invert Mask** và bộ c
 Mask neo theo ảnh nguồn, giữ vị trí khi crop/xoay/cân đường chân trời; zoom và pan chỉ đổi cách xem. Local adjustments chạy sau global tone/LUT, trước Halation/Bloom và grain, có trong preview, LUT Browser và export. Overlay đỏ không được xuất vào ảnh.
 
 Layer được giữ riêng từng ảnh khi chuyển filmstrip trong phiên hiện tại. **Copy/Paste Edits** chỉ sao chép thông số màu toàn ảnh, không sao chép mask. Để giữ layer sau khi thoát app, dùng menu **… → Export Layers…**, rồi **Import Layers…** khi mở lại cùng ảnh. Import sẽ thêm các layer vào danh sách hiện tại. File layer chỉ chứa mask/thông số cục bộ, không chứa ảnh nguồn hoặc chỉnh màu toàn ảnh. Đây là bộ local adjustment cơ bản; chưa có AI mask, luminosity range hay pressure từ bút vẽ.
+
+
+## Cột công cụ bên phải
+
+Inspector được chia thành bốn tab để giảm cuộn:
+
+- **Edit**: Light & White Balance, eyedropper và Tone Curve.
+- **Looks**: Film LUT / LUT Browser, Halation & Bloom, Film Grain.
+- **Layers**: Layer và công cụ vẽ mask cục bộ.
+- **Crop**: Crop, xoay và cân đường chân trời.
+
+Histogram nằm ở đầu và có thể thu gọn. Các nhóm trong Edit/Looks cũng có thể đóng/mở, có thông tin nhanh về hiệu ứng đang bật. App nhớ tab và trạng thái nhóm giữa các lần mở. Khi rời tab Layers, công cụ vẽ mask được tắt; khi rời Edit, eyedropper được hủy. Export luôn cố định phía dưới, cạnh menu **… → Reset All Adjustments**.
