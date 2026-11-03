@@ -15,6 +15,7 @@ public struct InspectorView: View {
     @AppStorage("inspector.activeTab") private var selectedTab: InspectorTab = .edit
     @AppStorage("inspector.histogramExpanded") private var histogramExpanded = false
     @AppStorage("inspector.basicExpanded") private var basicExpanded = true
+    @AppStorage("inspector.colorExpanded") private var colorExpanded = false
     @AppStorage("inspector.curveExpanded") private var curveExpanded = false
     @AppStorage("inspector.lutExpanded") private var lutExpanded = true
     @AppStorage("inspector.lightExpanded") private var lightExpanded = false
@@ -50,6 +51,9 @@ public struct InspectorView: View {
                                     summary: String(format: "%+.2f EV", viewModel.currentPreset.exposure), expanded: $basicExpanded) {
                                 basicAdjustmentsSection
                             }
+                            section("Color Editor", icon: "circle.lefthalf.filled", summary: viewModel.currentPreset.colorAdjustments?.isAdjusted == true ? "Active" : nil, expanded: $colorExpanded) {
+                                ColorEditorView(viewModel: viewModel)
+                            }
                             section("Tone Curve", icon: "point.topleft.down.to.point.bottomright.curvepath", summary: nil, expanded: $curveExpanded) {
                                 ToneCurveEditorView(points: $viewModel.currentPreset.toneCurvePoints)
                             }
@@ -78,8 +82,12 @@ public struct InspectorView: View {
         }
         .frame(minWidth: 280, idealWidth: 320)
         .onChange(of: selectedTab) { tab in
+            if tab != .edit { viewModel.cancelColorSampling() }
             if tab != .layers { viewModel.isEditingMask = false }
             if tab != .edit, viewModel.isPickingWhiteBalance { viewModel.toggleWhiteBalancePicker() }
+        }
+        .onChange(of: viewModel.isPickingColor) { picking in
+            if picking { selectedTab = .edit; colorExpanded = true }
         }
         .onChange(of: viewModel.isEditingMask) { editing in
             if editing { selectedTab = .layers }

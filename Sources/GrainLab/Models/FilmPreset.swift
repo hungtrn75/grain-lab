@@ -61,6 +61,7 @@ public struct FilmPreset: Codable, Equatable, Identifiable {
     /// Film grain noise particle size (1.0 to 3.0)
     public var grainSize: CGFloat = 1.0
     
+    public var colorAdjustments: ColorAdjustments? = nil
     public var whiteBalanceGains: WhiteBalanceGains? = nil
     public var lightEffects: LightEffects? = nil
     public var halationAmount: CGFloat {

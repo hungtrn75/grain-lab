@@ -33,6 +33,17 @@ public struct CanvasView: View {
                             }
                             MaskDrawingView(viewModel: viewModel, canvasSize: geo.size, imageSize: image.size)
                         }
+                        if viewModel.isPickingColor {
+                            Color.clear.contentShape(Rectangle())
+                                .gesture(SpatialTapGesture().onEnded { value in
+                                    guard !viewModel.isProcessing,
+                                          let point = CanvasCoordinates.imagePoint(value.location, canvas: geo.size, image: image.size,
+                                              zoom: viewModel.zoomScale, pan: viewModel.panOffset) else { return }
+                                    viewModel.sampleColorRange(at: point)
+                                })
+                                .onHover { inside in if inside { NSCursor.crosshair.set() } else { NSCursor.arrow.set() } }
+                                .onDisappear { NSCursor.arrow.set() }
+                        }
                         if viewModel.isPickingWhiteBalance {
                             Color.clear.contentShape(Rectangle())
                                 .gesture(SpatialTapGesture().onEnded { value in
@@ -102,6 +113,15 @@ public struct CanvasView: View {
                 }
             }
 
+            if viewModel.isPickingColor {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Text("Click a color to add a range")
+                        Button("Cancel") { viewModel.cancelColorSampling() }.keyboardShortcut(.cancelAction)
+                    }.font(.caption).padding(10).background(.regularMaterial).cornerRadius(8).padding(.bottom, 64)
+                }
+            }
             if viewModel.isEditingMask {
                 VStack {
                     Spacer()

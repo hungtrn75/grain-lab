@@ -59,7 +59,7 @@ public final class EditorViewModel: ObservableObject {
     @Published public var selectedLayerID: UUID? { didSet { refreshMaskPreview() } }
     @Published public var isEditingMask = false {
         didSet {
-            if isEditingMask { cancelWhiteBalanceSampling(); showComparison = false; showOriginal = false }
+            if isEditingMask { cancelColorSampling(); cancelWhiteBalanceSampling(); showComparison = false; showOriginal = false }
             refreshMaskPreview()
         }
     }
@@ -112,6 +112,75 @@ public final class EditorViewModel: ObservableObject {
         }
     }
 
+    @Published public var selectedColorRangeIndex = 0
+    @Published public var isPickingColor = false
+    @Published public private(set) var isSamplingColor = false
+    @Published public private(set) var colorSampleMessage: String?
+    private var colorSampleTask: Task<Void, Never>?
+    private var colorSampleGeneration = UUID()
+
+    public var colorRanges: [ColorRangeAdjustment] { currentPreset.colorAdjustments?.ranges ?? ColorAdjustments().ranges }
+    public var selectedColorRange: ColorRangeAdjustment? {
+        colorRanges.indices.contains(selectedColorRangeIndex) ? colorRanges[selectedColorRangeIndex] : nil
+    }
+
+    public func updateColorRange(_ update: (inout ColorRangeAdjustment) -> Void) {
+        var settings = currentPreset.colorAdjustments ?? ColorAdjustments()
+        guard settings.ranges.indices.contains(selectedColorRangeIndex) else { return }
+        update(&settings.ranges[selectedColorRangeIndex])
+        currentPreset.colorAdjustments = settings
+    }
+
+    public func toggleColorPicker() {
+        if isPickingColor { cancelColorSampling(); return }
+        cancelWhiteBalanceSampling()
+        isEditingMask = false
+        showComparison = false
+        showOriginal = false
+        colorSampleMessage = nil
+        isPickingColor = true
+    }
+
+    public func cancelColorSampling() {
+        colorSampleTask?.cancel()
+        colorSampleGeneration = UUID()
+        isPickingColor = false
+        isSamplingColor = false
+        colorSampleMessage = nil
+    }
+
+    public func sampleColorRange(at point: CGPoint) {
+        guard !isSamplingColor else { return }
+        let generation = UUID()
+        colorSampleGeneration = generation
+        let engine = engine, preset = currentPreset, geometry = geometry, url = loadedImageURL
+        isSamplingColor = true
+        colorSampleMessage = nil
+        colorSampleTask = Task { [weak self] in
+            let worker = Task.detached(priority: .userInitiated) { try engine.sampleColor(at: point, preset: preset, geometry: geometry) }
+            do {
+                let hsl = try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
+                guard let self, !Task.isCancelled, self.colorSampleGeneration == generation else { return }
+                self.isSamplingColor = false
+                guard self.currentPreset == preset, self.geometry == geometry, self.loadedImageURL == url else {
+                    self.colorSampleMessage = "Image or edits changed. Pick the color again."
+                    return
+                }
+                var settings = preset.colorAdjustments ?? ColorAdjustments()
+                let range = ColorRangeAdjustment(name: "Sample \(max(1, settings.ranges.count - 7))", center: CGFloat(hsl.x) * 360)
+                settings.ranges.append(range)
+                self.currentPreset.colorAdjustments = settings
+                self.selectedColorRangeIndex = settings.ranges.count - 1
+                self.isPickingColor = false
+                self.colorSampleMessage = "Sampled range added. Adjust Hue, Saturation or Lightness below."
+            } catch {
+                guard let self, !Task.isCancelled, self.colorSampleGeneration == generation else { return }
+                self.isSamplingColor = false
+                self.colorSampleMessage = error.localizedDescription
+            }
+        }
+    }
+
     @Published public var isPickingWhiteBalance = false
     @Published public private(set) var isSamplingWhiteBalance = false
     @Published public private(set) var whiteBalanceMessage: String?
@@ -119,6 +188,7 @@ public final class EditorViewModel: ObservableObject {
     private var whiteBalanceGeneration = UUID()
 
     public func toggleWhiteBalancePicker() {
+        cancelColorSampling()
         isEditingMask = false
         if isPickingWhiteBalance {
             cancelWhiteBalanceSampling()
@@ -185,6 +255,7 @@ public final class EditorViewModel: ObservableObject {
     private var comparisonGeometry: PhotoGeometry?
 
     public func toggleComparison() {
+        cancelColorSampling()
         isEditingMask = false
         showOriginal = false
         showComparison.toggle()
@@ -235,6 +306,7 @@ public final class EditorViewModel: ObservableObject {
     public func loadImage(from url: URL) {
         let url = url.standardizedFileURL
         guard url != loadedImageURL else { return }
+        cancelColorSampling()
         cancelWhiteBalanceSampling()
         if let previous = loadedImageURL { photoEdits[previous] = (currentPreset, geometry, layers) }
         do {
@@ -244,6 +316,7 @@ public final class EditorViewModel: ObservableObject {
             if !photoURLs.contains(url) { photoURLs.append(url) }
             let edits = photoEdits[url]
             currentPreset = edits?.0 ?? .defaultPreset
+            selectedColorRangeIndex = 0
             geometry = edits?.1 ?? PhotoGeometry()
             layers = edits?.2 ?? []
             selectedLayerID = layers.last?.id
@@ -274,7 +347,9 @@ public final class EditorViewModel: ObservableObject {
     
     /// Loads a direct CIImage (e.g. for bundled demo images or unit tests)
     public func loadDirectImage(_ ciImage: CIImage) {
+        cancelColorSampling()
         cancelWhiteBalanceSampling()
+        selectedColorRangeIndex = 0
         engine.loadDirect(image: ciImage)
         sourceImageSize = ciImage.extent.size
         layers = []
@@ -356,6 +431,7 @@ public final class EditorViewModel: ObservableObject {
     public func applyPreset(_ preset: FilmPreset) {
         // Retain original preset ID or assign new ID
         self.currentPreset = preset
+        selectedColorRangeIndex = 0
     }
     
     /// Clear color adjustments while retaining this photo's crop and rotation.
@@ -369,6 +445,8 @@ public final class EditorViewModel: ObservableObject {
     }
 
     public func resetAdjustments() {
+        cancelColorSampling()
+        selectedColorRangeIndex = 0
         layers = []
         selectedLayerID = nil
         isEditingMask = false

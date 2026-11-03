@@ -131,6 +131,8 @@ public final class CoreImageEngine: @unchecked Sendable {
         // Step 4: 3D LUT (CIColorCube)
         currentImage = apply3DLUT(to: currentImage, preset: preset)
 
+        currentImage = applyColorAdjustments(to: currentImage, settings: preset.colorAdjustments)
+
         currentImage = applyLayers(layers, to: currentImage, sourceExtent: sourceExtent, geometry: geometry)
 
         // Light diffusion precedes grain so it never blurs or amplifies grain noise.
@@ -144,6 +146,43 @@ public final class CoreImageEngine: @unchecked Sendable {
         // Step 6: Render to CGImage on GPU in standard sRGB color space
         let srgb = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
         return context.createCGImage(currentImage, from: currentImage.extent, format: .RGBA8, colorSpace: srgb)
+    }
+
+    func applyColorAdjustments(to image: CIImage, settings: ColorAdjustments?) -> CIImage {
+        guard let settings, settings.isAdjusted,
+              let cube = ColorAdjustmentEngine.shared.cube(for: settings) else { return image }
+        let adjusted = applyLUT(to: image, data: cube, intensity: 1)
+        // A finite cube can interpolate colored neighbors into a neutral pixel.
+        // Compute this guard from the actual input, not from cube grid samples.
+        let maximum = image.applyingFilter("CIMaximumComponent")
+        let minimum = image.applyingFilter("CIMinimumComponent")
+        let chroma = minimum.applyingFilter("CISubtractBlendMode", parameters: [kCIInputBackgroundImageKey: maximum])
+        let mask = chroma.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 25, y: 0, z: 0, w: 0),
+            "inputGVector": CIVector(x: 0, y: 25, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: 25, w: 0),
+            "inputBiasVector": CIVector(x: -0.125, y: -0.125, z: -0.125, w: 0)
+        ]).applyingFilter("CIColorClamp")
+        return adjusted.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: image, kCIInputMaskImageKey: mask])
+    }
+
+    /// Sample after global tone/LUT, but before HSL/local adjustments and effects.
+    func sampleColor(at point: CGPoint, preset: FilmPreset, geometry: PhotoGeometry) throws -> SIMD3<Float> {
+        var sourcePreset = preset
+        sourcePreset.colorAdjustments = nil
+        sourcePreset.lightEffects = nil
+        sourcePreset.grainIntensity = 0
+        guard let cg = render(with: sourcePreset, targetMaxDimension: 1024, geometry: geometry) else { throw EngineError.renderingFailed }
+        let image = CIImage(cgImage: cg)
+        let patch = CGRect(x: point.x * image.extent.width - 2, y: (1 - point.y) * image.extent.height - 2, width: 5, height: 5).intersection(image.extent)
+        guard !patch.isNull, !patch.isEmpty else { throw WhiteBalanceError.outsideImage }
+        let average = image.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: patch)])
+        var pixel = [Float](repeating: 0, count: 4)
+        context.render(average, toBitmap: &pixel, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf,
+                       colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+        let hsl = ColorAdjustmentEngine.hsl(SIMD3(pixel[0], pixel[1], pixel[2]))
+        guard pixel[3] > 0.99, hsl.y > 0.04, hsl.z > 0.02, hsl.z < 0.98 else { throw ColorSampleError.neutral }
+        return hsl
     }
 
     func applyLayers(_ layers: [AdjustmentLayer], to image: CIImage, sourceExtent: CGRect, geometry: PhotoGeometry) -> CIImage {
@@ -234,6 +273,7 @@ public final class CoreImageEngine: @unchecked Sendable {
     func makeLUTPreviewSource(preset: FilmPreset, geometry: PhotoGeometry) -> CGImage? {
         var base = preset
         base.lutFileName = nil
+        base.colorAdjustments = nil
         base.grainIntensity = 0
         base.lightEffects = nil
         return render(with: base, targetMaxDimension: 384, geometry: geometry)
@@ -244,6 +284,7 @@ public final class CoreImageEngine: @unchecked Sendable {
         guard !Task.isCancelled else { return nil }
         var image = CIImage(cgImage: source)
         if let lut { image = applyLUT(to: image, data: lut, intensity: preset.lutIntensity) }
+        image = applyColorAdjustments(to: image, settings: preset.colorAdjustments)
         if !layers.isEmpty, let sourceExtent {
             image = applyLayers(layers, to: image, sourceExtent: sourceExtent, geometry: geometry)
         }
@@ -610,4 +651,10 @@ enum WhiteBalanceError: LocalizedError {
         case .strongColor: return "This area has a strong color cast. Pick a more neutral gray or white area."
         }
     }
+}
+
+
+enum ColorSampleError: LocalizedError {
+    case neutral
+    var errorDescription: String? { "This area is too neutral, dark or bright to select a hue. Pick a colored area." }
 }

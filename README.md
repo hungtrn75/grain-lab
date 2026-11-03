@@ -174,3 +174,12 @@ Inspector được chia thành bốn tab để giảm cuộn:
 - **Crop**: Crop, xoay và cân đường chân trời.
 
 Histogram nằm ở đầu và có thể thu gọn. Các nhóm trong Edit/Looks cũng có thể đóng/mở, có thông tin nhanh về hiệu ứng đang bật. App nhớ tab và trạng thái nhóm giữa các lần mở. Khi rời tab Layers, công cụ vẽ mask được tắt; khi rời Edit, eyedropper được hủy. Export luôn cố định phía dưới, cạnh menu **… → Reset All Adjustments**.
+
+
+## Color Editor — chỉnh màu theo dải HSL
+
+Mở **Edit → Color Editor**. Chọn một trong 8 dải Red, Orange, Yellow, Green, Cyan, Blue, Purple, Magenta, rồi chỉnh **Hue, Saturation, Lightness**. **Range Center**, **Range Width** và **Softness** điều khiển vùng màu bị tác động; có thể kéo trực tiếp trên thanh phổ màu để đổi tâm. Chấm trắng trên swatch đánh dấu dải đang có chỉnh sửa. Các dải có thể bật/tắt riêng, reset riêng hoặc reset toàn bộ.
+
+**Pick & Add Color Range…** cho phép nhấp màu trên ảnh để tạo một dải riêng. Phép đo lấy trung bình vùng nhỏ sau global WB/tone/LUT, trước Color Editor, layer và hiệu ứng để không tự đuổi theo màu vừa chỉnh. Vùng gần xám, quá tối hoặc quá sáng sẽ được yêu cầu chọn lại. Nhấn **Esc** để hủy. Các dải có thể chồng lấn; điều chỉnh của chúng cộng theo độ phủ và chuyển tiếp mềm. Vùng gần trung tính được bảo vệ.
+
+Color Editor chạy sau Film LUT, trước layer cục bộ và Halation/Bloom/grain. Nó áp dụng theo màu trên toàn ảnh, chưa có Skin Tone Uniformity hoặc Color Balance ba bánh xe. Thiết lập đi cùng preset JSON, copy/paste, LUT Browser và export; preset cũ mặc định không có hiệu chỉnh màu này.

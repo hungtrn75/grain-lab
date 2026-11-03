@@ -507,6 +507,111 @@ final class GrainLabTests: XCTestCase {
         try await Task.sleep(nanoseconds: 150_000_000)
     }
 
+    func testColorEditorHueWrapSelectiveAdjustmentAndGrayProtection() {
+        var red = ColorRangeAdjustment(name: "Red", center: 0)
+        red.hue = 60
+        let yellow = ColorAdjustmentEngine.adjust(SIMD3(1, 0, 0), ranges: [red])
+        XCTAssertEqual(yellow.x, 1, accuracy: 0.001)
+        XCTAssertEqual(yellow.y, 1, accuracy: 0.001)
+        XCTAssertEqual(yellow.z, 0, accuracy: 0.001)
+        XCTAssertEqual(ColorAdjustmentEngine.adjust(SIMD3(0, 0, 1), ranges: [red]), SIMD3(0, 0, 1))
+        XCTAssertEqual(ColorAdjustmentEngine.adjust(SIMD3(repeating: 0.5), ranges: [red]), SIMD3(repeating: 0.5))
+        let left = ColorAdjustmentEngine.weight(hue: 359 / 360, saturation: 1, range: red)
+        let right = ColorAdjustmentEngine.weight(hue: 1 / 360, saturation: 1, range: red)
+        XCTAssertEqual(left, right, accuracy: 0.0001)
+        red.hue = 0; red.saturation = -1
+        let gray = ColorAdjustmentEngine.adjust(SIMD3(1, 0, 0), ranges: [red])
+        XCTAssertEqual(gray.x, gray.y, accuracy: 0.001)
+        XCTAssertEqual(gray.y, gray.z, accuracy: 0.001)
+        red.enabled = false
+        XCTAssertEqual(ColorAdjustmentEngine.adjust(SIMD3(1, 0, 0), ranges: [red]), SIMD3(1, 0, 0))
+    }
+
+    func testColorRangeSoftEdgesAndLightness() {
+        var range = ColorRangeAdjustment(name: "Blue", center: 240)
+        range.width = 40; range.softness = 0.5; range.lightness = 0.2
+        let inside = ColorAdjustmentEngine.weight(hue: 240 / 360, saturation: 1, range: range)
+        let edge = ColorAdjustmentEngine.weight(hue: 270 / 360, saturation: 1, range: range)
+        let outside = ColorAdjustmentEngine.weight(hue: 285 / 360, saturation: 1, range: range)
+        XCTAssertEqual(inside, 1)
+        XCTAssertGreaterThan(edge, 0); XCTAssertLessThan(edge, 1)
+        XCTAssertEqual(outside, 0)
+        let result = ColorAdjustmentEngine.adjust(SIMD3(0, 0, 1), ranges: [range])
+        XCTAssertGreaterThan(result.x, 0.3)
+        XCTAssertEqual(result.z, 1, accuracy: 0.001)
+    }
+
+    func testColorEditorPreviewExportAndLUTBrowserMatch() throws {
+        let engine = CoreImageEngine()
+        engine.loadDirect(image: CIImage(color: CIColor(red: 1, green: 0, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: 80, height: 60)))
+        var preset = FilmPreset.defaultPreset
+        preset.colorAdjustments = ColorAdjustments()
+        preset.colorAdjustments?.ranges[0].hue = 60
+        let full = try XCTUnwrap(engine.render(with: preset))
+        let pixel = try XCTUnwrap(NSBitmapImageRep(cgImage: full).colorAt(x: 40, y: 30))
+        XCTAssertGreaterThan(pixel.redComponent, 0.95)
+        XCTAssertGreaterThan(pixel.greenComponent, 0.95)
+        XCTAssertLessThan(pixel.blueComponent, 0.05)
+        let source = try XCTUnwrap(engine.makeLUTPreviewSource(preset: preset, geometry: PhotoGeometry()))
+        let thumb = try XCTUnwrap(engine.renderLUTThumbnail(source: source, preset: preset, lut: nil))
+        let thumbPixel = try XCTUnwrap(NSBitmapImageRep(cgImage: thumb).colorAt(x: 40, y: 30))
+        XCTAssertEqual(thumbPixel.redComponent, pixel.redComponent, accuracy: 0.01)
+        XCTAssertEqual(thumbPixel.greenComponent, pixel.greenComponent, accuracy: 0.01)
+        preset.colorAdjustments?.enabled = false
+        let bypass = try XCTUnwrap(engine.render(with: preset))
+        XCTAssertLessThan(try XCTUnwrap(NSBitmapImageRep(cgImage: bypass).colorAt(x: 40, y: 30)).greenComponent, 0.02)
+        let restored = try JSONDecoder().decode(FilmPreset.self, from: JSONEncoder().encode(preset))
+        XCTAssertEqual(restored.colorAdjustments, preset.colorAdjustments)
+    }
+
+    @MainActor
+    func testColorPickerAddsRangeAndCopiesIt() async throws {
+        let vm = EditorViewModel()
+        vm.loadDirectImage(CIImage(color: CIColor(red: 0, green: 0, blue: 1)).cropped(to: CGRect(x: 0, y: 0, width: 80, height: 60)))
+        vm.toggleColorPicker()
+        vm.sampleColorRange(at: CGPoint(x: 0.5, y: 0.5))
+        for _ in 0..<200 {
+            if !vm.isSamplingColor { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertFalse(vm.isSamplingColor)
+        XCTAssertFalse(vm.isPickingColor)
+        XCTAssertEqual(vm.colorRanges.count, 9)
+        XCTAssertEqual(try XCTUnwrap(vm.selectedColorRange).center, 240, accuracy: 1)
+        vm.updateColorRange { $0.saturation = -0.5 }
+        vm.copyAdjustments()
+        vm.resetAdjustments()
+        XCTAssertNil(vm.currentPreset.colorAdjustments)
+        vm.pasteAdjustments()
+        XCTAssertEqual(vm.currentPreset.colorAdjustments?.ranges.count, 9)
+        XCTAssertEqual(vm.currentPreset.colorAdjustments?.ranges.last?.saturation, -0.5)
+        try await Task.sleep(nanoseconds: 150_000_000)
+    }
+
+    func testColorPickerRejectsNeutralPixels() {
+        let engine = CoreImageEngine()
+        engine.loadDirect(image: CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5)).cropped(to: CGRect(x: 0, y: 0, width: 80, height: 60)))
+        XCTAssertThrowsError(try engine.sampleColor(at: CGPoint(x: 0.5, y: 0.5), preset: .defaultPreset, geometry: PhotoGeometry()))
+    }
+
+    func testColorEditorPreservesNeutralPixelsBetweenCubeGridPoints() throws {
+        let engine = CoreImageEngine()
+        var preset = FilmPreset.defaultPreset
+        preset.colorAdjustments = ColorAdjustments()
+        preset.colorAdjustments?.ranges[0].hue = 60
+        preset.colorAdjustments?.ranges[0].lightness = 0.5
+        for level: CGFloat in [0.01, 0.03, 0.1, 0.3, 0.7, 0.97] {
+            engine.loadDirect(image: CIImage(color: CIColor(red: level, green: level, blue: level)).cropped(to: CGRect(x: 0, y: 0, width: 8, height: 8)))
+            let baseline = try XCTUnwrap(engine.render(with: .defaultPreset))
+            let edited = try XCTUnwrap(engine.render(with: preset))
+            let before = try XCTUnwrap(NSBitmapImageRep(cgImage: baseline).colorAt(x: 4, y: 4))
+            let after = try XCTUnwrap(NSBitmapImageRep(cgImage: edited).colorAt(x: 4, y: 4))
+            XCTAssertEqual(after.redComponent, before.redComponent, accuracy: 0.005)
+            XCTAssertEqual(after.greenComponent, before.greenComponent, accuracy: 0.005)
+            XCTAssertEqual(after.blueComponent, before.blueComponent, accuracy: 0.005)
+        }
+    }
+
     // MARK: - Task 1 Tests: FilmPreset & Codable & PresetManager
     func testFilmPresetCodable() throws {
         let preset = FilmPreset(
