@@ -27,6 +27,12 @@ public struct CanvasView: View {
                         imageLayer(image, size: geo.size)
                             .gesture(panGesture)
                             .gesture(zoomGesture)
+                        if viewModel.isEditingMask, viewModel.selectedLayer != nil {
+                            if viewModel.showMaskOverlay, let overlay = viewModel.maskOverlay {
+                                imageLayer(overlay, size: geo.size).allowsHitTesting(false)
+                            }
+                            MaskDrawingView(viewModel: viewModel, canvasSize: geo.size, imageSize: image.size)
+                        }
                         if viewModel.isPickingWhiteBalance {
                             Color.clear.contentShape(Rectangle())
                                 .gesture(SpatialTapGesture().onEnded { value in
@@ -93,6 +99,17 @@ public struct CanvasView: View {
                     }
                     .font(.caption).padding(10).background(.regularMaterial).cornerRadius(8)
                     .padding(.bottom, 64)
+                }
+            }
+
+            if viewModel.isEditingMask {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Text("Drawing: \(viewModel.selectedLayer?.name ?? "Mask")")
+                        Button("Done") { viewModel.isEditingMask = false }.keyboardShortcut(.cancelAction)
+                    }
+                    .font(.caption).padding(10).background(.regularMaterial).cornerRadius(8).padding(.bottom, 64)
                 }
             }
 

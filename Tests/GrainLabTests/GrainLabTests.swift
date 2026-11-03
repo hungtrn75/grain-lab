@@ -45,11 +45,14 @@ final class GrainLabTests: XCTestCase {
         vm.importPhotos([first, second, first])
         XCTAssertEqual(vm.photoURLs.count, 2)
         vm.currentPreset.exposure = 1.25
+        vm.addLayer(.linear)
+        let layerID = vm.layers[0].id
         vm.geometry.quarterTurns = 1
         vm.geometry.crop = CGRect(x: 0, y: 0, width: 0.5, height: 0.5)
         vm.copyAdjustments()
         vm.loadImage(from: second)
         XCTAssertEqual(vm.currentPreset.exposure, 0)
+        XCTAssertTrue(vm.layers.isEmpty)
         XCTAssertEqual(vm.geometry, PhotoGeometry())
         vm.pasteAdjustments()
         XCTAssertEqual(vm.currentPreset.exposure, 1.25)
@@ -58,6 +61,7 @@ final class GrainLabTests: XCTestCase {
         vm.loadImage(from: first)
         XCTAssertEqual(vm.currentPreset.exposure, 1.25)
         XCTAssertEqual(vm.geometry.quarterTurns, 1)
+        XCTAssertEqual(vm.layers.first?.id, layerID)
         vm.loadImage(from: second)
         XCTAssertEqual(vm.currentPreset.exposure, -0.5)
         vm.pasteAdjustmentsToAll()
@@ -367,6 +371,140 @@ final class GrainLabTests: XCTestCase {
         vm.pasteAdjustments()
         XCTAssertNotNil(vm.currentPreset.whiteBalanceGains)
         try await Task.sleep(nanoseconds: 200_000_000)
+    }
+
+    private func maskPixel(_ image: CIImage, x: Int, y: Int) -> Float {
+        var pixel = [Float](repeating: 0, count: 4)
+        CIContext().render(image, toBitmap: &pixel, rowBytes: 16, bounds: CGRect(x: x, y: y, width: 1, height: 1),
+                           format: .RGBAf, colorSpace: CGColorSpace(name: CGColorSpace.linearSRGB)!)
+        return pixel[0]
+    }
+
+    func testLinearAndRadialMasksAndOpacity() {
+        let extent = CGRect(x: 0, y: 0, width: 200, height: 200)
+        var layer = AdjustmentLayer(kind: .linear)
+        layer.start = CGPoint(x: 0.25, y: 0.5)
+        layer.end = CGPoint(x: 0.75, y: 0.5)
+        let mask = LayerMaskRenderer.mask(for: layer, extent: extent)
+        XCTAssertGreaterThan(maskPixel(mask, x: 20, y: 100), 0.99)
+        XCTAssertLessThan(maskPixel(mask, x: 180, y: 100), 0.01)
+        XCTAssertEqual(maskPixel(mask, x: 100, y: 100), 0.5, accuracy: 0.02)
+        layer.inverted = true
+        layer.opacity = 0.5
+        let inverse = LayerMaskRenderer.mask(for: layer, extent: extent)
+        XCTAssertEqual(maskPixel(inverse, x: 180, y: 100), 0.5, accuracy: 0.01)
+        layer = AdjustmentLayer(kind: .radial)
+        let radial = LayerMaskRenderer.mask(for: layer, extent: extent)
+        XCTAssertGreaterThan(maskPixel(radial, x: 100, y: 100), 0.99)
+        XCTAssertLessThan(maskPixel(radial, x: 190, y: 100), 0.01)
+    }
+
+    func testBrushPaintEraseAndSoftEdge() {
+        let extent = CGRect(x: 0, y: 0, width: 200, height: 200)
+        var layer = AdjustmentLayer(kind: .brush)
+        layer.strokes = [BrushStroke(points: [CGPoint(x: 0.5, y: 0.5)], radius: 0.2, hardness: 0.5, flow: 1, erase: false)]
+        let painted = LayerMaskRenderer.mask(for: layer, extent: extent)
+        XCTAssertGreaterThan(maskPixel(painted, x: 100, y: 100), 0.95)
+        let edge = maskPixel(painted, x: 130, y: 100)
+        XCTAssertGreaterThan(edge, 0.05)
+        XCTAssertLessThan(edge, 0.95)
+        XCTAssertLessThan(maskPixel(painted, x: 180, y: 100), 0.01)
+        layer.strokes.append(BrushStroke(points: [CGPoint(x: 0.5, y: 0.5)], radius: 0.08, hardness: 0.99, flow: 1, erase: true))
+        XCTAssertLessThan(maskPixel(LayerMaskRenderer.mask(for: layer, extent: extent), x: 100, y: 100), 0.01)
+        layer.strokes = [BrushStroke(points: [CGPoint(x: 0.2, y: 0.5), CGPoint(x: 0.8, y: 0.5)], radius: 0.03, hardness: 0.8, flow: 1, erase: false)]
+        XCTAssertGreaterThan(maskPixel(LayerMaskRenderer.mask(for: layer, extent: extent), x: 100, y: 100), 0.8)
+    }
+
+    func testLocalLayerOnlyChangesMaskedRegionAndExportSize() throws {
+        let engine = CoreImageEngine()
+        let extent = CGRect(x: 0, y: 0, width: 200, height: 100)
+        engine.loadDirect(image: CIImage(color: CIColor(red: 0.4, green: 0.4, blue: 0.4)).cropped(to: extent))
+        var layer = AdjustmentLayer(kind: .linear)
+        layer.start = CGPoint(x: 0.25, y: 0.5); layer.end = CGPoint(x: 0.75, y: 0.5)
+        layer.exposure = 1
+        let base = try XCTUnwrap(engine.render(with: .defaultPreset))
+        let result = try XCTUnwrap(engine.render(with: .defaultPreset, targetMaxDimension: nil, layers: [layer]))
+        let before = NSBitmapImageRep(cgImage: base), after = NSBitmapImageRep(cgImage: result)
+        XCTAssertGreaterThan(try XCTUnwrap(after.colorAt(x: 10, y: 50)).redComponent, try XCTUnwrap(before.colorAt(x: 10, y: 50)).redComponent + 0.1)
+        XCTAssertEqual(try XCTUnwrap(after.colorAt(x: 190, y: 50)).redComponent, try XCTUnwrap(before.colorAt(x: 190, y: 50)).redComponent, accuracy: 0.005)
+        layer.enabled = false
+        let disabled = try XCTUnwrap(engine.render(with: .defaultPreset, targetMaxDimension: nil, layers: [layer]))
+        XCTAssertEqual(disabled.dataProvider?.data as Data?, base.dataProvider?.data as Data?)
+        var geometry = PhotoGeometry()
+        geometry.quarterTurns = 1
+        geometry.crop = CGRect(x: 0, y: 0, width: 0.5, height: 1)
+        let cropped = try XCTUnwrap(engine.render(with: .defaultPreset, targetMaxDimension: nil, geometry: geometry, layers: [layer]))
+        XCTAssertEqual(cropped.width, 50); XCTAssertEqual(cropped.height, 200)
+        let restored = try JSONDecoder().decode(AdjustmentLayer.self, from: JSONEncoder().encode(layer))
+        XCTAssertEqual(restored, layer)
+    }
+
+    func testMaskCoordinatesRoundTripThroughCropRotateAndStraighten() {
+        let size = CGSize(width: 600, height: 400)
+        for turn in -1...3 {
+            var geometry = PhotoGeometry()
+            geometry.quarterTurns = turn
+            geometry.straighten = 7
+            geometry.crop = CGRect(x: 0.15, y: 0.2, width: 0.7, height: 0.6)
+            let point = CGPoint(x: 0.3, y: 0.65)
+            let source = geometry.sourcePoint(fromOutput: point, sourceSize: size)
+            let recovered = geometry.outputPoint(fromSource: source, sourceSize: size)
+            XCTAssertEqual(recovered.x, point.x, accuracy: 0.00001)
+            XCTAssertEqual(recovered.y, point.y, accuracy: 0.00001)
+            let output = geometry.apply(to: CIImage(color: .white).cropped(to: CGRect(origin: .zero, size: size)))
+            XCTAssertEqual(output.extent.size, geometry.mapping(sourceSize: size).size)
+        }
+    }
+
+    func testLayerArchiveRoundTripAndRejectsInvalidMask() throws {
+        var layer = AdjustmentLayer(kind: .brush)
+        layer.strokes = [BrushStroke(points: [CGPoint(x: 0.4, y: 0.7)], radius: 0.05, hardness: 0.3, flow: 0.8, erase: false)]
+        let data = try JSONEncoder().encode(LayerArchive(layers: [layer]))
+        XCTAssertEqual(try LayerArchive.decode(data), [layer])
+        layer.start.x = 10000
+        let invalid = try JSONEncoder().encode(LayerArchive(layers: [layer]))
+        XCTAssertThrowsError(try LayerArchive.decode(invalid))
+    }
+
+    func testLayerGeometryMappingMatchesRenderedGradient() {
+        let extent = CGRect(x: 0, y: 0, width: 600, height: 400)
+        var layer = AdjustmentLayer(kind: .linear)
+        layer.start = CGPoint(x: 0.2, y: 0.5)
+        layer.end = CGPoint(x: 0.8, y: 0.5)
+        let source = LayerMaskRenderer.mask(for: layer, extent: extent)
+        for turn in 0...3 {
+            var geometry = PhotoGeometry()
+            geometry.quarterTurns = turn
+            geometry.straighten = 5
+            geometry.crop = CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
+            let output = geometry.apply(to: source)
+            let point = CGPoint(x: 0.4, y: 0.6)
+            let mapped = geometry.sourcePoint(fromOutput: point, sourceSize: extent.size)
+            let actual = maskPixel(output, x: Int(point.x * output.extent.width), y: Int((1 - point.y) * output.extent.height))
+            let expected = min(max((0.8 - mapped.x) / 0.6, 0), 1)
+            XCTAssertEqual(actual, Float(expected), accuracy: 0.015)
+        }
+    }
+
+    @MainActor
+    func testLayerAdjustmentsReachExport() async throws {
+        let vm = EditorViewModel()
+        vm.loadDirectImage(CIImage(color: CIColor(red: 0.4, green: 0.4, blue: 0.4))
+            .cropped(to: CGRect(x: 0, y: 0, width: 100, height: 80)))
+        vm.addLayer(.linear)
+        vm.updateSelectedLayer {
+            $0.start = CGPoint(x: 0.3, y: 0.5)
+            $0.end = CGPoint(x: 0.7, y: 0.5)
+            $0.exposure = 1
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".png")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await vm.exportImage(to: url, format: .png)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: Data(contentsOf: url)))
+        let left = try XCTUnwrap(bitmap.colorAt(x: 10, y: 40))
+        let right = try XCTUnwrap(bitmap.colorAt(x: 90, y: 40))
+        XCTAssertGreaterThan(left.redComponent, right.redComponent + 0.1)
+        try await Task.sleep(nanoseconds: 150_000_000)
     }
 
     // MARK: - Task 1 Tests: FilmPreset & Codable & PresetManager

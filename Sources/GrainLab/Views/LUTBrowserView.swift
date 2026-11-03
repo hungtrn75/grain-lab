@@ -11,7 +11,7 @@ final class LUTBrowserModel: ObservableObject {
     private var source: CGImage?
     static let bypassID = "__grainlab_bypass__"
 
-    func load(engine: CoreImageEngine, preset: FilmPreset, geometry: PhotoGeometry, items: [LUTItem]) async {
+    func load(engine: CoreImageEngine, preset: FilmPreset, geometry: PhotoGeometry, items: [LUTItem], layers: [AdjustmentLayer] = []) async {
         let generation = UUID()
         self.generation = generation
         completedIntensity = nil
@@ -36,7 +36,8 @@ final class LUTBrowserModel: ObservableObject {
                 do {
                     let lut = try item.map { try LUTParser.shared.parse(from: $0.url) }
                     guard !Task.isCancelled else { return (nil, nil) }
-                    return (engine.renderLUTThumbnail(source: source, preset: preset, lut: lut), nil)
+                    return (engine.renderLUTThumbnail(source: source, preset: preset, lut: lut, layers: layers,
+                        sourceExtent: engine.sourceImageSize.map { CGRect(origin: .zero, size: $0) }, geometry: geometry), nil)
                 } catch { return (nil, error.localizedDescription) }
             }
             let (image, message) = await withTaskCancellationHandler(operation: { await worker.value }, onCancel: { worker.cancel() })
@@ -58,11 +59,13 @@ struct LUTBrowserView: View {
     @State private var intensity: CGFloat
     private let snapshot: FilmPreset
     private let geometry: PhotoGeometry
+    private let layers: [AdjustmentLayer]
 
     init(viewModel: EditorViewModel) {
         self.viewModel = viewModel
         snapshot = viewModel.currentPreset
         geometry = viewModel.geometry
+        layers = viewModel.layers
         _selection = State(initialValue: viewModel.currentPreset.lutFileName ?? LUTBrowserModel.bypassID)
         _intensity = State(initialValue: viewModel.currentPreset.lutIntensity)
     }
@@ -116,7 +119,7 @@ struct LUTBrowserView: View {
             do { try await Task.sleep(nanoseconds: 120_000_000) } catch { return }
             var preset = snapshot
             preset.lutIntensity = intensity
-            await model.load(engine: viewModel.engine, preset: preset, geometry: geometry, items: registry.availableLUTs)
+            await model.load(engine: viewModel.engine, preset: preset, geometry: geometry, items: registry.availableLUTs, layers: layers)
         }
     }
 

@@ -33,7 +33,7 @@ public final class EditorViewModel: ObservableObject {
         return true
     }
 
-    private var photoEdits: [URL: (FilmPreset, PhotoGeometry)] = [:]
+    private var photoEdits: [URL: (FilmPreset, PhotoGeometry, [AdjustmentLayer])] = [:]
 
     public func importPhotos(_ urls: [URL]) {
         let unique = urls.map { $0.standardizedFileURL }.filter { $0.isFileURL }
@@ -50,9 +50,66 @@ public final class EditorViewModel: ObservableObject {
     public func pasteAdjustmentsToAll() {
         guard let copiedAdjustments else { return }
         for url in photoURLs {
-            photoEdits[url] = (copiedAdjustments, url == loadedImageURL ? geometry : (photoEdits[url]?.1 ?? PhotoGeometry()))
+            photoEdits[url] = (copiedAdjustments, url == loadedImageURL ? geometry : (photoEdits[url]?.1 ?? PhotoGeometry()), url == loadedImageURL ? layers : (photoEdits[url]?.2 ?? []))
         }
         currentPreset = copiedAdjustments
+    }
+
+    @Published public var layers: [AdjustmentLayer] = []
+    @Published public var selectedLayerID: UUID? { didSet { refreshMaskPreview() } }
+    @Published public var isEditingMask = false {
+        didSet {
+            if isEditingMask { cancelWhiteBalanceSampling(); showComparison = false; showOriginal = false }
+            refreshMaskPreview()
+        }
+    }
+    @Published public var showMaskOverlay = true { didSet { refreshMaskPreview() } }
+    @Published public private(set) var maskOverlay: NSImage?
+    @Published public private(set) var sourceImageSize: CGSize = .zero
+    @Published public var brushRadius: CGFloat = 0.04
+    @Published public var brushHardness: CGFloat = 0.5
+    @Published public var brushFlow: CGFloat = 1
+    @Published public var brushErase = false
+    private var maskTask: Task<Void, Never>?
+    private var maskGeneration = UUID()
+
+    public var selectedLayer: AdjustmentLayer? { layers.first { $0.id == selectedLayerID } }
+
+    public func addLayer(_ kind: LayerMaskKind) {
+        let layer = AdjustmentLayer(kind: kind, name: "\(kind.rawValue) \(layers.count + 1)")
+        layers.append(layer)
+        selectedLayerID = layer.id
+        isEditingMask = true
+    }
+
+    public func updateSelectedLayer(_ change: (inout AdjustmentLayer) -> Void) {
+        guard let index = layers.firstIndex(where: { $0.id == selectedLayerID }) else { return }
+        change(&layers[index])
+    }
+
+    public func deleteSelectedLayer() {
+        layers.removeAll { $0.id == selectedLayerID }
+        selectedLayerID = layers.last?.id
+        if layers.isEmpty { isEditingMask = false }
+    }
+
+    public func moveSelectedLayer(_ offset: Int) {
+        guard let index = layers.firstIndex(where: { $0.id == selectedLayerID }), layers.indices.contains(index + offset) else { return }
+        layers.swapAt(index, index + offset)
+    }
+
+    public func refreshMaskPreview() {
+        maskTask?.cancel()
+        let generation = UUID()
+        maskGeneration = generation
+        guard isEditingMask, showMaskOverlay, let layer = selectedLayer else { maskOverlay = nil; return }
+        let engine = engine, geometry = geometry
+        maskTask = Task { [weak self] in
+            let worker = Task.detached(priority: .utility) { engine.renderMaskOverlay(layer: layer, geometry: geometry) }
+            let image = await withTaskCancellationHandler(operation: { await worker.value }, onCancel: { worker.cancel() })
+            guard let self, !Task.isCancelled, self.maskGeneration == generation else { return }
+            if let image { self.maskOverlay = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height)) }
+        }
     }
 
     @Published public var isPickingWhiteBalance = false
@@ -62,6 +119,7 @@ public final class EditorViewModel: ObservableObject {
     private var whiteBalanceGeneration = UUID()
 
     public func toggleWhiteBalancePicker() {
+        isEditingMask = false
         if isPickingWhiteBalance {
             cancelWhiteBalanceSampling()
             return
@@ -127,6 +185,7 @@ public final class EditorViewModel: ObservableObject {
     private var comparisonGeometry: PhotoGeometry?
 
     public func toggleComparison() {
+        isEditingMask = false
         showOriginal = false
         showComparison.toggle()
     }
@@ -161,12 +220,13 @@ public final class EditorViewModel: ObservableObject {
     // MARK: - Debounce Pipeline
     private func setupDebounce() {
         // Setup Debounce: Only trigger rendering after user pauses slider movement (50ms)
-        $currentPreset.combineLatest($geometry)
-            .removeDuplicates { $0.0 == $1.0 && $0.1 == $1.1 }
+        $currentPreset.combineLatest($geometry, $layers)
+            .removeDuplicates { $0.0 == $1.0 && $0.1 == $1.1 && $0.2 == $1.2 }
             .dropFirst()
             .debounce(for: .milliseconds(50), scheduler: DispatchQueue.main)
-            .sink { [weak self] newPreset, _ in
+            .sink { [weak self] newPreset, _, _ in
                 self?.processImage(with: newPreset)
+                self?.refreshMaskPreview()
             }
             .store(in: &cancellables)
     }
@@ -176,7 +236,7 @@ public final class EditorViewModel: ObservableObject {
         let url = url.standardizedFileURL
         guard url != loadedImageURL else { return }
         cancelWhiteBalanceSampling()
-        if let previous = loadedImageURL { photoEdits[previous] = (currentPreset, geometry) }
+        if let previous = loadedImageURL { photoEdits[previous] = (currentPreset, geometry, layers) }
         do {
             try engine.loadRAW(url: url)
             renderTask?.cancel()
@@ -185,6 +245,10 @@ public final class EditorViewModel: ObservableObject {
             let edits = photoEdits[url]
             currentPreset = edits?.0 ?? .defaultPreset
             geometry = edits?.1 ?? PhotoGeometry()
+            layers = edits?.2 ?? []
+            selectedLayerID = layers.last?.id
+            isEditingMask = false
+            sourceImageSize = engine.sourceImageSize ?? .zero
             errorMessage = nil
             displayImage = nil
             originalImage = nil
@@ -212,6 +276,10 @@ public final class EditorViewModel: ObservableObject {
     public func loadDirectImage(_ ciImage: CIImage) {
         cancelWhiteBalanceSampling()
         engine.loadDirect(image: ciImage)
+        sourceImageSize = ciImage.extent.size
+        layers = []
+        selectedLayerID = nil
+        isEditingMask = false
         comparisonImage = nil
         comparisonGeometry = nil
         self.loadedImageURL = nil
@@ -235,6 +303,7 @@ public final class EditorViewModel: ObservableObject {
         
         let engine = self.engine
         let geometry = self.geometry
+        let layers = self.layers
         let needsComparison = comparisonImage == nil || comparisonGeometry != geometry
         
         renderTask = Task { [weak self] in
@@ -245,7 +314,7 @@ public final class EditorViewModel: ObservableObject {
                 guard !Task.isCancelled else { return nil }
                 
                 // Downscale to 2048px max dimension for fast 60fps responsive editing
-                guard let cgImage = engine.render(with: preset, targetMaxDimension: 2048, geometry: geometry) else {
+                guard let cgImage = engine.render(with: preset, targetMaxDimension: 2048, geometry: geometry, layers: layers) else {
                     return nil
                 }
                 
@@ -300,6 +369,9 @@ public final class EditorViewModel: ObservableObject {
     }
 
     public func resetAdjustments() {
+        layers = []
+        selectedLayerID = nil
+        isEditingMask = false
         self.currentPreset = .defaultPreset
         self.geometry = PhotoGeometry()
     }
@@ -331,10 +403,11 @@ public final class EditorViewModel: ObservableObject {
         let engine = self.engine
         let preset = self.currentPreset
         let geometry = self.geometry
+        let layers = self.layers
         
         try await Task.detached(priority: .userInitiated) {
             // Render full resolution without downsampling
-            guard let fullCGImage = engine.render(with: preset, targetMaxDimension: nil, geometry: geometry) else {
+            guard let fullCGImage = engine.render(with: preset, targetMaxDimension: nil, geometry: geometry, layers: layers) else {
                 throw EngineError.renderingFailed
             }
         

@@ -147,3 +147,18 @@ Trong **Basic & White Balance**, nhấn **Pick Neutral Gray / White…** rồi n
 - Vùng quá tối, cháy sáng hoặc có màu quá mạnh sẽ được yêu cầu chọn lại. Dùng vật thể bạn biết là xám/trắng trung tính; tránh đèn màu hoặc phản chiếu màu.
 - Nhấn **Esc / Cancel** để hủy, **Clear Sample** để bỏ hiệu chỉnh. Chỉnh Temp/Tint thủ công cũng bỏ hiệu chỉnh đã lấy mẫu để tránh chồng hai cách chỉnh WB.
 - Hiệu chỉnh được giữ trong preset, copy/paste và export. Lấy mẫu lại sẽ thay thế hiệu chỉnh trước đó.
+
+
+## Layers & Masks
+
+Trong Inspector, **Layers & Masks → Add** tạo layer chỉnh sửa cục bộ:
+
+- **Linear Gradient**: kéo từ vùng tác động 100% đến vùng 0%. Kéo lại để đổi vị trí/hướng.
+- **Radial Gradient**: kéo từ tâm đến mép ellipse; **Feather** chỉnh độ chuyển tiếp. Kéo lại để đổi vị trí/kích thước.
+- **Brush**: vẽ lên ảnh, chỉnh **Brush Size**, **Hardness**, **Flow**. Bật **Erase** để xóa vùng mask; **Undo Stroke** bỏ nét cuối, **Clear Mask** xóa toàn bộ nét.
+
+Mỗi layer có tên, bật/tắt, **Layer Opacity**, **Invert Mask** và bộ chỉnh **Exposure, Contrast, Saturation, Warmth**. Layer ở trên trong danh sách được xử lý sau layer ở dưới. Dùng mũi tên để đổi thứ tự, thùng rác để xóa. Mask đỏ và đường hướng dẫn chỉ hiển thị khi **Draw / Edit Mask** đang bật; **Done / Esc** trở về pan bình thường. Có thể dùng Option + cuộn chuột để zoom trong lúc vẽ.
+
+Mask neo theo ảnh nguồn, giữ vị trí khi crop/xoay/cân đường chân trời; zoom và pan chỉ đổi cách xem. Local adjustments chạy sau global tone/LUT, trước Halation/Bloom và grain, có trong preview, LUT Browser và export. Overlay đỏ không được xuất vào ảnh.
+
+Layer được giữ riêng từng ảnh khi chuyển filmstrip trong phiên hiện tại. **Copy/Paste Edits** chỉ sao chép thông số màu toàn ảnh, không sao chép mask. Để giữ layer sau khi thoát app, dùng menu **… → Export Layers…**, rồi **Import Layers…** khi mở lại cùng ảnh. Import sẽ thêm các layer vào danh sách hiện tại. File layer chỉ chứa mask/thông số cục bộ, không chứa ảnh nguồn hoặc chỉnh màu toàn ảnh. Đây là bộ local adjustment cơ bản; chưa có AI mask, luminosity range hay pressure từ bút vẽ.

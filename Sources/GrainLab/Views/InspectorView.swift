@@ -42,6 +42,9 @@ public struct InspectorView: View {
                 
                 Divider()
                 
+                LayersView(viewModel: viewModel)
+                Divider()
+
                 // MARK: - 5. Film Grain Effects
                 lightEffectsSection
                 Divider()

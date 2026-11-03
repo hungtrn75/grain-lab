@@ -28,6 +28,12 @@ public final class CoreImageEngine: @unchecked Sendable {
     private var loadedURL: URL?
     private(set) public var currentMetadata: ImageMetadata?
 
+    var sourceImageSize: CGSize? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return originalRawImage?.extent.size
+    }
+
     public init() {
         if let device = MTLCreateSystemDefaultDevice() {
             self.context = CIContext(mtlDevice: device, options: [
@@ -94,7 +100,7 @@ public final class CoreImageEngine: @unchecked Sendable {
     }
 
     /// Renders with an optional downsampling target size for high-performance interactive previewing
-    public func render(with preset: FilmPreset, targetMaxDimension: CGFloat? = nil, geometry: PhotoGeometry = PhotoGeometry()) -> CGImage? {
+    public func render(with preset: FilmPreset, targetMaxDimension: CGFloat? = nil, geometry: PhotoGeometry = PhotoGeometry(), layers: [AdjustmentLayer] = []) -> CGImage? {
         stateLock.lock()
         defer { stateLock.unlock() }
         // A cancelled preview may have waited behind another GPU render.
@@ -102,6 +108,7 @@ public final class CoreImageEngine: @unchecked Sendable {
         guard !Task.isCancelled else { return nil }
         guard var currentImage = getBaseImage(for: preset) else { return nil }
 
+        let sourceExtent = currentImage.extent
         currentImage = geometry.apply(to: currentImage)
 
         // Downsample for preview if requested
@@ -124,6 +131,8 @@ public final class CoreImageEngine: @unchecked Sendable {
         // Step 4: 3D LUT (CIColorCube)
         currentImage = apply3DLUT(to: currentImage, preset: preset)
 
+        currentImage = applyLayers(layers, to: currentImage, sourceExtent: sourceExtent, geometry: geometry)
+
         // Light diffusion precedes grain so it never blurs or amplifies grain noise.
         currentImage = applyLightEffects(to: currentImage, preset: preset)
 
@@ -135,6 +144,49 @@ public final class CoreImageEngine: @unchecked Sendable {
         // Step 6: Render to CGImage on GPU in standard sRGB color space
         let srgb = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
         return context.createCGImage(currentImage, from: currentImage.extent, format: .RGBA8, colorSpace: srgb)
+    }
+
+    func applyLayers(_ layers: [AdjustmentLayer], to image: CIImage, sourceExtent: CGRect, geometry: PhotoGeometry) -> CIImage {
+        var output = image
+        for layer in layers where layer.enabled && layer.opacity > 0 {
+            guard !Task.isCancelled else { return output }
+            if layer.exposure == 0 && layer.contrast == 1 && layer.saturation == 1 && layer.warmth == 0 { continue }
+            var adjusted = output.applyingFilter("CIExposureAdjust", parameters: ["inputEV": layer.exposure])
+                .applyingFilter("CIColorControls", parameters: [kCIInputContrastKey: layer.contrast, kCIInputSaturationKey: layer.saturation])
+            if abs(layer.warmth) > 0.001 {
+                adjusted = adjusted.applyingFilter("CITemperatureAndTint", parameters: [
+                    "inputNeutral": CIVector(x: 5500, y: 0), "inputTargetNeutral": CIVector(x: 5500 + layer.warmth, y: 0)
+                ])
+            }
+            let mask = fittedLayerMask(layer, sourceExtent: sourceExtent, geometry: geometry, target: image.extent)
+            output = adjusted.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: output, kCIInputMaskImageKey: mask])
+                .cropped(to: image.extent)
+        }
+        return output
+    }
+
+    private func fittedLayerMask(_ layer: AdjustmentLayer, sourceExtent: CGRect, geometry: PhotoGeometry, target: CGRect) -> CIImage {
+        let mask = geometry.apply(to: LayerMaskRenderer.mask(for: layer, extent: sourceExtent))
+        return mask.transformed(by: CGAffineTransform(scaleX: target.width / mask.extent.width, y: target.height / mask.extent.height))
+            .cropped(to: target)
+    }
+
+    func renderMaskOverlay(layer: AdjustmentLayer, geometry: PhotoGeometry) -> CGImage? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard !Task.isCancelled, let sourceExtent = originalRawImage?.extent else { return nil }
+        let transformed = geometry.apply(to: CIImage(color: .black).cropped(to: sourceExtent)).extent
+        let scale = min(1, 2048 / max(transformed.width, transformed.height))
+        let target = CGRect(x: 0, y: 0, width: transformed.width * scale, height: transformed.height * scale)
+        let mask = fittedLayerMask(layer, sourceExtent: sourceExtent, geometry: geometry, target: target)
+        let overlay = mask.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 0.45, y: 0, z: 0, w: 0),
+            "inputGVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputAVector": CIVector(x: 0.45, y: 0, z: 0, w: 0)
+        ])
+        guard !Task.isCancelled else { return nil }
+        return context.createCGImage(overlay, from: target, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
     }
 
     /// Samples a small neutral patch in linear sRGB before creative adjustments.
@@ -187,10 +239,14 @@ public final class CoreImageEngine: @unchecked Sendable {
         return render(with: base, targetMaxDimension: 384, geometry: geometry)
     }
 
-    func renderLUTThumbnail(source: CGImage, preset: FilmPreset, lut: LUTData?) -> CGImage? {
+    func renderLUTThumbnail(source: CGImage, preset: FilmPreset, lut: LUTData?, layers: [AdjustmentLayer] = [],
+                            sourceExtent: CGRect? = nil, geometry: PhotoGeometry = PhotoGeometry()) -> CGImage? {
         guard !Task.isCancelled else { return nil }
         var image = CIImage(cgImage: source)
         if let lut { image = applyLUT(to: image, data: lut, intensity: preset.lutIntensity) }
+        if !layers.isEmpty, let sourceExtent {
+            image = applyLayers(layers, to: image, sourceExtent: sourceExtent, geometry: geometry)
+        }
         image = applyLightEffects(to: image, preset: preset)
         image = applyFilmGrain(to: image, preset: preset, particleScale: CGFloat(max(source.width, source.height)) / 2048)
         guard !Task.isCancelled else { return nil }
