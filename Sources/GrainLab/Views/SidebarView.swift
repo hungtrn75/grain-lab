@@ -163,6 +163,9 @@ public struct SidebarView: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .openRAWFileRequested)) { _ in
+            openFilePicker()
+        }
         .listStyle(.sidebar)
         .frame(minWidth: 220, idealWidth: 250)
         .sheet(isPresented: $showingSavePresetDialog) {
@@ -213,7 +216,7 @@ public struct SidebarView: View {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
+        panel.allowsMultipleSelection = true
         // Allow all RAW formats and common image formats
         let allowedTypes: [UTType] = [
             .rawImage,
@@ -232,8 +235,8 @@ public struct SidebarView: View {
         ]
         panel.allowedContentTypes = allowedTypes
         
-        if panel.runModal() == .OK, let url = panel.url {
-            viewModel.loadImage(from: url)
+        if panel.runModal() == .OK {
+            viewModel.importPhotos(panel.urls)
         }
     }
     

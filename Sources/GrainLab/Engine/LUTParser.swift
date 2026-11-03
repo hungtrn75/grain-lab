@@ -24,6 +24,14 @@ public final class LUTParser {
     
     public init() {}
     
+    public func invalidate(url: URL) {
+        let key = url.standardizedFileURL.path
+        lock.lock()
+        defer { lock.unlock() }
+        cache.removeObject(forKey: key as NSString)
+        dimensionCache.removeValue(forKey: key)
+    }
+
     /// Parses a .cube file from the specified URL and returns a `LUTData` object.
     /// Results are cached in memory for high rendering performance.
     public func parse(from url: URL) throws -> LUTData {
@@ -62,7 +70,8 @@ public final class LUTParser {
                 continue
             }
             
-            let parts = trimmed.split(separator: " ").map { String($0) }
+            let parts = trimmed.split(separator: "#", maxSplits: 1).first?
+                .split(whereSeparator: { $0.isWhitespace }).map(String.init) ?? []
             guard !parts.isEmpty else { continue }
             
             if parts[0] == "TITLE" {
@@ -71,27 +80,40 @@ public final class LUTParser {
             }
             
             if parts[0] == "LUT_3D_SIZE" {
-                if parts.count >= 2, let dim = Int(parts[1]) {
+                if parts.count == 2, let dim = Int(parts[1]), (2...128).contains(dim), dimension == nil {
                     dimension = dim
                     floatBuffer.reserveCapacity(dim * dim * dim * 4)
+                } else {
+                    throw LUTError.invalidDimension
                 }
                 continue
             }
             
-            // Ignore 1D size, domain min/max lines for now
-            if parts[0].hasPrefix("DOMAIN_") || parts[0] == "LUT_1D_SIZE" {
+            // Non-unit domains and 1D shapers require a different transform.
+            if parts[0] == "DOMAIN_MIN" || parts[0] == "DOMAIN_MAX" {
+                let expected: Float = parts[0] == "DOMAIN_MIN" ? 0 : 1
+                guard parts.count == 4, parts.dropFirst().allSatisfy({ Float($0) == expected }) else {
+                    throw LUTError.unsupportedFormat
+                }
                 continue
             }
+            if parts[0] == "LUT_1D_SIZE" { throw LUTError.unsupportedFormat }
             
             // Data lines contain 3 floats: R G B
-            if parts.count >= 3,
+            if dimension != nil, parts.count == 3,
                let r = Float(parts[0]),
                let g = Float(parts[1]),
-               let b = Float(parts[2]) {
+               let b = Float(parts[2]), r.isFinite, g.isFinite, b.isFinite {
                 floatBuffer.append(r)
                 floatBuffer.append(g)
                 floatBuffer.append(b)
                 floatBuffer.append(1.0) // Premultiplied Alpha
+                let dim = dimension!
+                guard floatBuffer.count <= dim * dim * dim * 4 else {
+                    throw LUTError.dataCountMismatch(expected: dim * dim * dim * 4, actual: floatBuffer.count)
+                }
+            } else {
+                throw LUTError.unsupportedFormat
             }
         }
         
@@ -130,12 +152,15 @@ public final class LUTParser {
 }
 
 public enum LUTError: LocalizedError {
+    case unsupportedFormat
     case invalidDimension
     case dataCountMismatch(expected: Int, actual: Int)
     case fileNotFound(String)
     
     public var errorDescription: String? {
         switch self {
+        case .unsupportedFormat:
+            return "Unsupported or malformed cube data; expected a finite 3D LUT with a unit input domain"
         case .invalidDimension:
             return "Invalid or missing LUT_3D_SIZE in .cube file"
         case .dataCountMismatch(let expected, let actual):

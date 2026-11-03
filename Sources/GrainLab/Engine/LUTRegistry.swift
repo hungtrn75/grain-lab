@@ -52,7 +52,8 @@ public final class LUTRegistry: ObservableObject {
         if let appSupportFiles = try? fileManager.contentsOfDirectory(at: lutsDirectoryURL, includingPropertiesForKeys: nil) {
             for fileURL in appSupportFiles where fileURL.pathExtension.lowercased() == "cube" {
                 let fileName = fileURL.lastPathComponent
-                if !items.contains(where: { $0.fileName == fileName }) {
+                items.removeAll { $0.fileName == fileName }
+                do {
                     let name = fileURL.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "_", with: " ")
                     items.append(LUTItem(name: name, fileName: fileName, url: fileURL))
                 }
@@ -85,10 +86,14 @@ public final class LUTRegistry: ObservableObject {
         let fileName = sourceURL.lastPathComponent
         let targetURL = lutsDirectoryURL.appendingPathComponent(fileName)
         
-        if fileManager.fileExists(atPath: targetURL.path) {
-            try fileManager.removeItem(at: targetURL)
+        // Validate before replacing a working LUT, and replace atomically.
+        let data = try Data(contentsOf: sourceURL)
+        guard let content = String(data: data, encoding: .utf8) else {
+            throw LUTError.unsupportedFormat
         }
-        try fileManager.copyItem(at: sourceURL, to: targetURL)
+        _ = try LUTParser.shared.parse(string: content)
+        try data.write(to: targetURL, options: .atomic)
+        LUTParser.shared.invalidate(url: targetURL)
         reloadLUTs()
         
         let name = targetURL.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "_", with: " ")

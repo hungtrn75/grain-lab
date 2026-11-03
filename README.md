@@ -94,3 +94,56 @@ Chạy script tự động đóng gói:
 ./build_app.sh
 open GrainLab.app
 ```
+
+
+## Filmstrip và chỉnh bố cục
+
+- **Import RAW / Photo** hoặc **⌘O** cho phép chọn nhiều ảnh; cũng có thể kéo thả nhiều file vào canvas. Nhấn thumbnail trong filmstrip để chuyển ảnh.
+- Mỗi ảnh giữ thông số màu và bố cục riêng trong phiên làm việc hiện tại. Trạng thái này chưa được lưu lại khi thoát app.
+- **Copy Edits (⇧⌘C)** và **Paste Edits (⇧⌘V)** sao chép thông số màu, LUT, tone curve và grain. **Paste to All** áp dụng bản đã copy cho toàn bộ ảnh trong filmstrip. Crop và góc xoay không được copy.
+- Trong **Crop & Rotate**, chọn **Select Crop on Image…**, kéo vùng muốn giữ rồi nhấn **Apply Crop**. Có thể chọn tỷ lệ có sẵn hoặc chỉnh chiều rộng, chiều cao và vị trí bằng thanh trượt.
+- **Left / Right** xoay từng 90°. **Straighten** chỉnh nghiêng ±15° và tự phóng bù để không xuất hiện góc trong suốt. **Reset** khôi phục bố cục gốc.
+- Crop và xoay được áp dụng cả khi preview lẫn xuất ảnh ở độ phân giải gốc; file nguồn không bị sửa. Filmstrip hiển thị thumbnail của ảnh nguồn.
+
+
+## Before / After dạng thanh kéo
+
+Nhấn **Before / After** ở toolbar hoặc dưới canvas để bật so sánh. Bên trái là ảnh neutral trước chỉnh màu, bên phải là kết quả hiện tại. Kéo nút ở đường phân cách để thay đổi vùng hiển thị; nhấp đúp đường phân cách để đưa về giữa. Nhấn **Close Compare** để tắt.
+
+Hai bên dùng cùng crop, góc xoay, zoom và pan để giữ chi tiết khớp nhau. Ảnh Before được cache theo bố cục; kéo đường phân cách không chạy lại pipeline xử lý ảnh. Export luôn xuất ảnh đã chỉnh đầy đủ, không xuất thanh so sánh.
+
+
+## Áp LUT riêng để đối chiếu màu
+
+Trong **Import .cube**, chọn **Import & Apply LUT Only…** để áp LUT 100% với thông số màu neutral, không chồng WB, tone curve hoặc grain của preset trước. Chọn **Import LUT, Keep Current Edits…** nếu muốn giữ các chỉnh sửa đang có. Với LUT đã nhập, nút **Reset Color & Apply LUT at 100%** đưa về cùng chế độ neutral; crop và xoay được giữ nguyên.
+
+Pipeline hiện dùng LUT sRGB display-referred. File `.cube` không tự xác định ảnh nguồn có phải Log hay không. So sánh với ảnh quảng cáo cần cùng ảnh đầu vào và cùng cách phát triển RAW. Không áp LUT lại vào phần After của ảnh mẫu đã chỉnh.
+
+
+## Halation & Bloom
+
+Trong Inspector, phần **Halation & Bloom** có hai hiệu ứng độc lập, mặc định tắt:
+
+- **Halation** tạo quầng đỏ/cam bên ngoài vùng sáng. **Halo Spread** chỉnh độ lan.
+- **Bloom** tạo ánh sáng lan mềm, trung tính. **Bloom Spread** chỉnh độ rộng.
+- **Highlight Threshold** chọn ngưỡng vùng sáng làm nguồn; giảm ngưỡng nếu hiệu ứng chưa rõ.
+- **Reset** tắt cả hai và trả các thông số về mặc định.
+
+Gợi ý thử: Halation 20–35%, Bloom 10–20%, Threshold 60%. Ảnh có đèn, nắng ngược hoặc phản chiếu sáng sẽ thể hiện rõ hơn ảnh tối đều. Hiệu ứng chạy sau LUT và trước grain, có trong preview, export, preset JSON và copy/paste. Độ lan được tính theo tỷ lệ kích thước ảnh để giữ cảm giác nhất quán giữa preview và export. Preset JSON cũ vẫn được hỗ trợ.
+
+
+## LUT Browser với thumbnail
+
+Ở phần **Film Simulation (3D LUT)**, nhấn **Browse LUT Previews…**. Browser hiển thị các LUT có sẵn và LUT đã import trên chính ảnh hiện tại, có tìm kiếm theo tên và thumbnail **None / Bypass**. Chọn thumbnail, chỉnh **Intensity**, rồi nhấn **Apply LUT**; **Cancel** giữ nguyên ảnh chính. WB, tone curve, crop và hiệu ứng hiện tại được giữ khi áp dụng.
+
+Ảnh nền được xử lý một lần ở kích thước nhỏ, sau đó tạo lần lượt các thumbnail ở nền. Đóng Browser sẽ hủy tác vụ preview. LUT lỗi có biểu tượng cảnh báo và không thể chọn. Thumbnail là preview thu nhỏ; kiểm tra chi tiết trên canvas sau khi áp dụng.
+
+
+## Eyedropper cân bằng trắng
+
+Trong **Basic & White Balance**, nhấn **Pick Neutral Gray / White…** rồi nhấp vùng xám hoặc trắng có chi tiết trên ảnh. Công cụ lấy trung bình vùng nhỏ trước LUT, tone curve và hiệu ứng, rồi áp hiệu chỉnh RGB tuyến tính. Hiệu chỉnh cũng áp dụng cho ảnh RAW sau giải mã; đây không phải phép đo nhiệt độ Kelvin hoặc thông số WB từ cảm biến máy ảnh.
+
+- Tọa độ lấy mẫu theo crop/xoay và mức zoom/pan hiện tại. Khi bật picker, chế độ so sánh được tắt.
+- Vùng quá tối, cháy sáng hoặc có màu quá mạnh sẽ được yêu cầu chọn lại. Dùng vật thể bạn biết là xám/trắng trung tính; tránh đèn màu hoặc phản chiếu màu.
+- Nhấn **Esc / Cancel** để hủy, **Clear Sample** để bỏ hiệu chỉnh. Chỉnh Temp/Tint thủ công cũng bỏ hiệu chỉnh đã lấy mẫu để tránh chồng hai cách chỉnh WB.
+- Hiệu chỉnh được giữ trong preset, copy/paste và export. Lấy mẫu lại sẽ thay thế hiệu chỉnh trước đó.

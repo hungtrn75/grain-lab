@@ -16,7 +16,13 @@ public struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 320)
         } content: {
             // MARK: - Middle Column (Center Canvas: Zoom, Pan, Image Viewport)
-            CanvasView(viewModel: viewModel)
+            VStack(spacing: 0) {
+                CanvasView(viewModel: viewModel)
+                if !viewModel.photoURLs.isEmpty {
+                    Divider()
+                    FilmstripView(viewModel: viewModel)
+                }
+            }
                 .navigationSplitViewColumnWidth(min: 400, ideal: 700)
         } detail: {
             // MARK: - Right Column (Inspector: Controls, Sliders, Curves, LUT, Grain)
@@ -29,11 +35,11 @@ public struct ContentView: View {
             ToolbarItemGroup(placement: .automatic) {
                 // Before / After Comparison
                 Button(action: {
-                    viewModel.showOriginal.toggle()
+                    viewModel.toggleComparison()
                 }) {
                     Label(
-                        viewModel.showOriginal ? "Showing Original" : "Before / After",
-                        systemImage: viewModel.showOriginal ? "eye.slash.fill" : "eye.circle"
+                        viewModel.showComparison ? "Close Compare" : "Before / After",
+                        systemImage: "rectangle.lefthalf.filled"
                     )
                 }
                 .help("Toggle Before / After (Original vs Simulated)")
@@ -49,6 +55,12 @@ public struct ContentView: View {
                 .disabled(viewModel.displayImage == nil)
             }
         }
+        .alert("GrainLab Error", isPresented: Binding(
+            get: { viewModel.errorMessage != nil },
+            set: { if !$0 { viewModel.errorMessage = nil } }
+        )) {
+            Button("OK") { viewModel.errorMessage = nil }
+        } message: { Text(viewModel.errorMessage ?? "") }
         .onAppear {
             loadInitialDemoIfEmpty()
         }
@@ -67,7 +79,7 @@ public struct ContentView: View {
     
     /// Preloads a clean photographic demo gradient/pattern CIImage so the user sees live film simulation right away
     private func loadInitialDemoIfEmpty() {
-        guard viewModel.displayImage == nil && viewModel.loadedImageURL == nil else { return }
+        guard viewModel.beginInitialImageLoading() else { return }
         
         // Create an appealing test photographic gradient CIImage
         if let demoImage = Self.createDemoTestImage() {

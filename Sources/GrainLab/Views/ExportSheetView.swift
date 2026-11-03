@@ -66,8 +66,7 @@ public struct ExportSheetView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                     
-                    let mp = Double(meta.width * meta.height) / 1_000_000.0
-                    Text("\(meta.width) × \(meta.height) px (\(String(format: "%.1f", mp)) MP) • Full Native RAW Sensor Detail")
+                    Text("Source: \(meta.width) × \(meta.height) px. Export uses full resolution with the current crop and rotation.")
                         .font(.caption2)
                         .foregroundColor(.primary)
                 }

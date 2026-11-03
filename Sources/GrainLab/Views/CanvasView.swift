@@ -24,20 +24,41 @@ public struct CanvasView: View {
             if let image = activeImage {
                 GeometryReader { geo in
                     ZStack {
-                        Image(nsImage: image)
-                            .resizable()
-                            .interpolation(.high)
-                            .aspectRatio(contentMode: .fit)
-                            .scaleEffect(viewModel.zoomScale * gestureZoom)
-                            .offset(
-                                x: viewModel.panOffset.width + gesturePan.width,
-                                y: viewModel.panOffset.height + gesturePan.height
-                            )
+                        imageLayer(image, size: geo.size)
                             .gesture(panGesture)
                             .gesture(zoomGesture)
-                            .frame(width: geo.size.width, height: geo.size.height)
+                        if viewModel.isPickingWhiteBalance {
+                            Color.clear.contentShape(Rectangle())
+                                .gesture(SpatialTapGesture().onEnded { value in
+                                    guard !viewModel.isProcessing,
+                                          let point = CanvasCoordinates.imagePoint(value.location, canvas: geo.size, image: image.size,
+                                              zoom: viewModel.zoomScale, pan: viewModel.panOffset) else { return }
+                                    viewModel.sampleWhiteBalance(at: point)
+                                })
+                                .onHover { inside in
+                                    if inside { NSCursor.crosshair.set() } else { NSCursor.arrow.set() }
+                                }
+                                .onDisappear { NSCursor.arrow.set() }
+                        }
+                        if viewModel.showComparison, let before = viewModel.comparisonImage {
+                            imageLayer(before, size: geo.size)
+                                .mask(alignment: .leading) {
+                                    Rectangle().frame(width: geo.size.width * viewModel.comparisonPosition)
+                                }
+                                .allowsHitTesting(false)
+                            comparisonDivider(size: geo.size)
+                        }
                     }
+                    .frame(width: geo.size.width, height: geo.size.height)
                     .clipped()
+                    .contentShape(Rectangle())
+                    .contextMenu {
+                        Button {
+                            viewModel.resetZoom()
+                        } label: {
+                            Label("Fit to Screen", systemImage: "arrow.up.left.and.arrow.down.right")
+                        }
+                    }
                 }
             } else {
                 emptyDropZone
@@ -62,6 +83,19 @@ public struct CanvasView: View {
                 }
             }
             
+            if viewModel.isPickingWhiteBalance {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Text("Click a neutral gray / white area")
+                        Button("Cancel") { viewModel.toggleWhiteBalancePicker() }
+                            .keyboardShortcut(.cancelAction)
+                    }
+                    .font(.caption).padding(10).background(.regularMaterial).cornerRadius(8)
+                    .padding(.bottom, 64)
+                }
+            }
+
             // Processing spinner in top right
             if viewModel.isProcessing {
                 VStack {
@@ -93,11 +127,77 @@ public struct CanvasView: View {
                 }
             }
         }
+        .background {
+            GeometryReader { geometry in
+                OptionScrollZoomView { delta in
+                    guard activeImage != nil else { return }
+                    viewModel.zoomScale = min(max(viewModel.zoomScale * exp(delta * 0.01), 0.2), 8.0)
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
+            }
+        }
         .onDrop(of: [.fileURL], isTargeted: $isTargetedForDrop) { providers in
             handleDrop(providers: providers)
         }
     }
     
+    private func imageLayer(_ image: NSImage, size: CGSize) -> some View {
+        Image(nsImage: image)
+            .resizable()
+            .interpolation(.high)
+            .aspectRatio(contentMode: .fit)
+            .frame(width: size.width, height: size.height)
+            .scaleEffect(viewModel.zoomScale * gestureZoom)
+            .offset(x: viewModel.panOffset.width + gesturePan.width,
+                    y: viewModel.panOffset.height + gesturePan.height)
+    }
+
+    private func comparisonDivider(size: CGSize) -> some View {
+        ZStack {
+            HStack {
+                Text("BEFORE")
+                Spacer()
+                Text("AFTER")
+            }
+            .font(.caption.weight(.bold))
+            .foregroundColor(.white)
+            .shadow(color: .black, radius: 3)
+            .padding(16)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .allowsHitTesting(false)
+
+            ZStack {
+                Rectangle().fill(.white).frame(width: 2)
+                    .shadow(color: .black.opacity(0.6), radius: 2)
+                Image(systemName: "arrow.left.and.right")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.black)
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(.white))
+                    .shadow(radius: 3)
+            }
+            .frame(width: 44, height: size.height)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("comparisonCanvas"))
+                .onChanged { value in
+                    viewModel.comparisonPosition = min(max(value.location.x / max(size.width, 1), 0), 1)
+                })
+            .onTapGesture(count: 2) { viewModel.comparisonPosition = 0.5 }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Before / After divider")
+            .accessibilityValue("\(Int(viewModel.comparisonPosition * 100)) percent before")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: viewModel.comparisonPosition = min(viewModel.comparisonPosition + 0.05, 1)
+                case .decrement: viewModel.comparisonPosition = max(viewModel.comparisonPosition - 0.05, 0)
+                @unknown default: break
+                }
+            }
+            .position(x: size.width * viewModel.comparisonPosition, y: size.height / 2)
+        }
+        .coordinateSpace(name: "comparisonCanvas")
+    }
+
     // MARK: - Active Display Image
     private var activeImage: NSImage? {
         if viewModel.showOriginal {
@@ -146,17 +246,17 @@ public struct CanvasView: View {
         HStack(spacing: 12) {
             // Before / After Comparison Button
             Button(action: {
-                viewModel.showOriginal.toggle()
+                viewModel.toggleComparison()
             }) {
                 HStack(spacing: 4) {
-                    Image(systemName: viewModel.showOriginal ? "eye.fill" : "eye")
-                    Text(viewModel.showOriginal ? "Showing Original" : "Before / After")
+                    Image(systemName: "rectangle.lefthalf.filled")
+                    Text(viewModel.showComparison ? "Close Compare" : "Before / After")
                 }
                 .font(.caption)
             }
             .buttonStyle(.bordered)
-            .tint(viewModel.showOriginal ? .orange : .secondary)
-            .help("Toggle unedited original RAW image comparison")
+            .tint(viewModel.showComparison ? .orange : .secondary)
+            .help("Drag the divider to compare before and after")
             
             Divider()
                 .frame(height: 14)
@@ -166,6 +266,8 @@ public struct CanvasView: View {
                 Image(systemName: "minus.magnifyingglass")
             }
             .buttonStyle(.plain)
+            .keyboardShortcut("-", modifiers: .command)
+            .help("Zoom Out (⌘−)")
             
             // Zoom Label
             Text("\(Int(round(viewModel.zoomScale * 100)))%")
@@ -178,6 +280,15 @@ public struct CanvasView: View {
                 Image(systemName: "plus.magnifyingglass")
             }
             .buttonStyle(.plain)
+            .keyboardShortcut("=", modifiers: .command)
+            .help("Zoom In (⌘= or ⌘+)")
+            .background {
+                // Also accept the shifted plus key on keyboards where + shares =.
+                Button("Zoom In") { viewModel.zoomIn() }
+                    .keyboardShortcut("+", modifiers: .command)
+                    .hidden()
+                    .accessibilityHidden(true)
+            }
             
             Divider()
                 .frame(height: 14)
@@ -227,15 +338,24 @@ public struct CanvasView: View {
     
     // MARK: - Drag & Drop Handling
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
-        guard let provider = providers.first else { return false }
-        
-        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-            guard let data = item as? Data,
-                  let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
-            
-            DispatchQueue.main.async {
-                self.viewModel.loadImage(from: url)
+        guard !providers.isEmpty else { return false }
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var urls: [Int: URL] = [:]
+        for (index, provider) in providers.enumerated() {
+            group.enter()
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                defer { group.leave() }
+                let url = (item as? URL) ?? (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
+                if let url {
+                    lock.lock()
+                    urls[index] = url
+                    lock.unlock()
+                }
             }
+        }
+        group.notify(queue: .main) {
+            viewModel.importPhotos(urls.sorted { $0.key < $1.key }.map(\.value))
         }
         return true
     }
@@ -244,8 +364,68 @@ public struct CanvasView: View {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
-        if panel.runModal() == .OK, let url = panel.url {
-            viewModel.loadImage(from: url)
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = [.image, .rawImage]
+        if panel.runModal() == .OK {
+            viewModel.importPhotos(panel.urls)
         }
+    }
+}
+
+/// Observes scrolling inside the canvas without intercepting pan or pinch gestures.
+private struct OptionScrollZoomView: NSViewRepresentable {
+    var onScroll: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> ScrollObserverView {
+        let view = ScrollObserverView()
+        view.onScroll = onScroll
+        return view
+    }
+
+    func updateNSView(_ nsView: ScrollObserverView, context: Context) {
+        nsView.onScroll = onScroll
+        nsView.startObservingIfNeeded()
+    }
+
+    static func dismantleNSView(_ nsView: ScrollObserverView, coordinator: ()) {
+        nsView.stopObserving()
+    }
+
+    final class ScrollObserverView: NSView {
+        var onScroll: ((CGFloat) -> Void)?
+        private var monitor: Any?
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            stopObserving()
+            startObservingIfNeeded()
+        }
+
+        func startObservingIfNeeded() {
+            guard window != nil, monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                guard let self, let window = self.window,
+                      (event.window == nil || event.window === window),
+                      NSApp.keyWindow === window,
+                      event.modifierFlags.contains(.option),
+                      !self.isHiddenOrHasHiddenAncestor,
+                      self.bounds.contains(self.convert(window.mouseLocationOutsideOfEventStream, from: nil)) else {
+                    return event
+                }
+                // Trackpads report pixel deltas; wheel mice report much smaller steps.
+                let delta = event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 1 : 10)
+                self.onScroll?(delta)
+                return nil
+            }
+        }
+
+        func stopObserving() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+        }
+
+        deinit { stopObserving() }
     }
 }

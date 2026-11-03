@@ -21,12 +21,115 @@ public enum ExportFormat: String, CaseIterable, Identifiable {
 
 @MainActor
 public final class EditorViewModel: ObservableObject {
+    @Published public var geometry = PhotoGeometry()
+    @Published public private(set) var photoURLs: [URL] = []
+    @Published public private(set) var copiedAdjustments: FilmPreset?
+    private var didInitializeImage = false
+
+    /// View appearance can repeat during window/layout changes; initialize only once.
+    public func beginInitialImageLoading() -> Bool {
+        guard !didInitializeImage, loadedImageURL == nil, originalImage == nil else { return false }
+        didInitializeImage = true
+        return true
+    }
+
+    private var photoEdits: [URL: (FilmPreset, PhotoGeometry)] = [:]
+
+    public func importPhotos(_ urls: [URL]) {
+        let unique = urls.map { $0.standardizedFileURL }.filter { $0.isFileURL }
+        for url in unique where !photoURLs.contains(url) { photoURLs.append(url) }
+        if let first = unique.first { loadImage(from: first) }
+    }
+
+    public func copyAdjustments() { copiedAdjustments = currentPreset }
+    public func pasteAdjustments() {
+        guard let copiedAdjustments else { return }
+        currentPreset = copiedAdjustments
+    }
+
+    public func pasteAdjustmentsToAll() {
+        guard let copiedAdjustments else { return }
+        for url in photoURLs {
+            photoEdits[url] = (copiedAdjustments, url == loadedImageURL ? geometry : (photoEdits[url]?.1 ?? PhotoGeometry()))
+        }
+        currentPreset = copiedAdjustments
+    }
+
+    @Published public var isPickingWhiteBalance = false
+    @Published public private(set) var isSamplingWhiteBalance = false
+    @Published public private(set) var whiteBalanceMessage: String?
+    private var whiteBalanceTask: Task<Void, Never>?
+    private var whiteBalanceGeneration = UUID()
+
+    public func toggleWhiteBalancePicker() {
+        if isPickingWhiteBalance {
+            cancelWhiteBalanceSampling()
+            return
+        }
+        isPickingWhiteBalance = true
+        whiteBalanceMessage = nil
+        if isPickingWhiteBalance {
+            showComparison = false
+            showOriginal = false
+        }
+    }
+
+    private func cancelWhiteBalanceSampling() {
+        whiteBalanceGeneration = UUID()
+        whiteBalanceTask?.cancel()
+        isPickingWhiteBalance = false
+        isSamplingWhiteBalance = false
+        whiteBalanceMessage = nil
+    }
+
+    public func sampleWhiteBalance(at point: CGPoint) {
+        guard !isSamplingWhiteBalance else { return }
+        let generation = UUID()
+        whiteBalanceGeneration = generation
+        let preset = currentPreset
+        let geometry = geometry
+        let url = loadedImageURL
+        let engine = engine
+        isSamplingWhiteBalance = true
+        whiteBalanceMessage = nil
+        whiteBalanceTask = Task { [weak self] in
+            let worker = Task.detached(priority: .userInitiated) {
+                try engine.measureWhiteBalance(at: point, preset: preset, geometry: geometry)
+            }
+            do {
+                let gains = try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
+                guard let self, !Task.isCancelled, self.whiteBalanceGeneration == generation else { return }
+                self.isSamplingWhiteBalance = false
+                guard self.loadedImageURL == url, self.geometry == geometry, self.currentPreset == preset else {
+                    self.whiteBalanceMessage = "Image or edits changed. Please pick a neutral area again."
+                    return
+                }
+                self.currentPreset.whiteBalanceGains = gains
+                self.isPickingWhiteBalance = false
+                self.whiteBalanceMessage = "Neutral white balance applied."
+            } catch {
+                guard let self, !Task.isCancelled, self.whiteBalanceGeneration == generation else { return }
+                self.isSamplingWhiteBalance = false
+                self.whiteBalanceMessage = error.localizedDescription
+            }
+        }
+    }
+
     // MARK: - Published Properties
     @Published public var currentPreset: FilmPreset = .defaultPreset
     @Published public var displayImage: NSImage?
     @Published public var originalImage: NSImage?
     @Published public var isProcessing: Bool = false
     @Published public var showOriginal: Bool = false
+    @Published public var showComparison: Bool = false
+    @Published public var comparisonPosition: CGFloat = 0.5
+    @Published public private(set) var comparisonImage: NSImage?
+    private var comparisonGeometry: PhotoGeometry?
+
+    public func toggleComparison() {
+        showOriginal = false
+        showComparison.toggle()
+    }
     
     // Zoom & Pan
     @Published public var zoomScale: CGFloat = 1.0
@@ -48,6 +151,7 @@ public final class EditorViewModel: ObservableObject {
     public let engine = CoreImageEngine()
     private var cancellables = Set<AnyCancellable>()
     private var renderTask: Task<Void, Never>?
+    private var renderWorker: Task<(CGImage, CGImage?, [Float], [Float], [Float], [Float])?, Never>?
     
     // MARK: - Initialization
     public init() {
@@ -57,10 +161,11 @@ public final class EditorViewModel: ObservableObject {
     // MARK: - Debounce Pipeline
     private func setupDebounce() {
         // Setup Debounce: Only trigger rendering after user pauses slider movement (50ms)
-        $currentPreset
+        $currentPreset.combineLatest($geometry)
+            .removeDuplicates { $0.0 == $1.0 && $0.1 == $1.1 }
             .dropFirst()
             .debounce(for: .milliseconds(50), scheduler: DispatchQueue.main)
-            .sink { [weak self] newPreset in
+            .sink { [weak self] newPreset, _ in
                 self?.processImage(with: newPreset)
             }
             .store(in: &cancellables)
@@ -68,8 +173,23 @@ public final class EditorViewModel: ObservableObject {
     
     // MARK: - Image Loading
     public func loadImage(from url: URL) {
+        let url = url.standardizedFileURL
+        guard url != loadedImageURL else { return }
+        cancelWhiteBalanceSampling()
+        if let previous = loadedImageURL { photoEdits[previous] = (currentPreset, geometry) }
         do {
             try engine.loadRAW(url: url)
+            renderTask?.cancel()
+            renderWorker?.cancel()
+            if !photoURLs.contains(url) { photoURLs.append(url) }
+            let edits = photoEdits[url]
+            currentPreset = edits?.0 ?? .defaultPreset
+            geometry = edits?.1 ?? PhotoGeometry()
+            errorMessage = nil
+            displayImage = nil
+            originalImage = nil
+            comparisonImage = nil
+            comparisonGeometry = nil
             self.loadedImageURL = url
             self.metadata = engine.currentMetadata
             self.resetZoom()
@@ -90,7 +210,10 @@ public final class EditorViewModel: ObservableObject {
     
     /// Loads a direct CIImage (e.g. for bundled demo images or unit tests)
     public func loadDirectImage(_ ciImage: CIImage) {
+        cancelWhiteBalanceSampling()
         engine.loadDirect(image: ciImage)
+        comparisonImage = nil
+        comparisonGeometry = nil
         self.loadedImageURL = nil
         self.metadata = engine.currentMetadata
         self.resetZoom()
@@ -107,31 +230,48 @@ public final class EditorViewModel: ObservableObject {
     public func processImage(with preset: FilmPreset, immediate: Bool = false) {
         // Cancel previous in-flight render task to prevent backlog
         renderTask?.cancel()
+        renderWorker?.cancel()
         self.isProcessing = true
         
         let engine = self.engine
+        let geometry = self.geometry
+        let needsComparison = comparisonImage == nil || comparisonGeometry != geometry
         
         renderTask = Task { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, !Task.isCancelled else { return }
             
             // Execute heavy GPU pipeline on background thread
-            let renderResult: (CGImage, [Float], [Float], [Float], [Float])? = await Task.detached(priority: .userInitiated) {
+            let worker = Task.detached(priority: .userInitiated) { () -> (CGImage, CGImage?, [Float], [Float], [Float], [Float])? in
                 guard !Task.isCancelled else { return nil }
                 
                 // Downscale to 2048px max dimension for fast 60fps responsive editing
-                guard let cgImage = engine.render(with: preset, targetMaxDimension: 2048) else {
+                guard let cgImage = engine.render(with: preset, targetMaxDimension: 2048, geometry: geometry) else {
                     return nil
                 }
                 
                 guard !Task.isCancelled else { return nil }
                 let (luma, r, g, b) = Self.computeHistogram(for: cgImage, bins: 64)
                 
-                return (cgImage, luma, r, g, b)
-            }.value
+                // Cache the neutral image for this geometry; color edits and divider
+                // movement reuse it without another RAW decode or GPU render.
+                var before: CGImage?
+                if needsComparison {
+                    guard !Task.isCancelled,
+                          let neutral = engine.render(with: .defaultPreset, targetMaxDimension: 2048, geometry: geometry) else { return nil }
+                    before = neutral
+                }
+                return (cgImage, before, luma, r, g, b)
+            }
+            self.renderWorker = worker
+            let renderResult = await worker.value
             
             guard !Task.isCancelled else { return }
             
-            if let (cgImage, luma, r, g, b) = renderResult {
+            if let (cgImage, before, luma, r, g, b) = renderResult {
+                if let before {
+                    self.comparisonImage = NSImage(cgImage: before, size: NSSize(width: before.width, height: before.height))
+                    self.comparisonGeometry = geometry
+                }
                 let size = NSSize(width: cgImage.width, height: cgImage.height)
                 self.displayImage = NSImage(cgImage: cgImage, size: size)
                 self.histogramLuma = luma
@@ -149,8 +289,19 @@ public final class EditorViewModel: ObservableObject {
         self.currentPreset = preset
     }
     
+    /// Clear color adjustments while retaining this photo's crop and rotation.
+    public func applyLUTOnly(_ fileName: String) {
+        var preset = FilmPreset.defaultPreset
+        preset.id = UUID()
+        preset.name = (fileName as NSString).deletingPathExtension
+        preset.lutFileName = fileName
+        preset.lutIntensity = 1
+        currentPreset = preset
+    }
+
     public func resetAdjustments() {
         self.currentPreset = .defaultPreset
+        self.geometry = PhotoGeometry()
     }
     
     // MARK: - Zoom & Pan Controls
@@ -179,30 +330,34 @@ public final class EditorViewModel: ObservableObject {
         
         let engine = self.engine
         let preset = self.currentPreset
+        let geometry = self.geometry
         
-        // Render full resolution without downsampling
-        guard let fullCGImage = engine.render(with: preset, targetMaxDimension: nil) else {
-            throw EngineError.renderingFailed
-        }
+        try await Task.detached(priority: .userInitiated) {
+            // Render full resolution without downsampling
+            guard let fullCGImage = engine.render(with: preset, targetMaxDimension: nil, geometry: geometry) else {
+                throw EngineError.renderingFailed
+            }
         
-        let bitmapRep = NSBitmapImageRep(cgImage: fullCGImage)
-        bitmapRep.size = NSSize(width: fullCGImage.width, height: fullCGImage.height)
+            let bitmapRep = NSBitmapImageRep(cgImage: fullCGImage)
+            bitmapRep.size = NSSize(width: fullCGImage.width, height: fullCGImage.height)
         
-        let fileData: Data?
-        switch format {
-        case .jpeg:
-            fileData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: quality])
-        case .png:
-            fileData = bitmapRep.representation(using: .png, properties: [:])
-        case .tiff:
-            fileData = bitmapRep.representation(using: .tiff, properties: [:])
-        }
+            let fileData: Data?
+            switch format {
+            case .jpeg:
+                fileData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: quality])
+            case .png:
+                fileData = bitmapRep.representation(using: .png, properties: [:])
+            case .tiff:
+                fileData = bitmapRep.representation(using: .tiff, properties: [:])
+            }
         
-        guard let data = fileData else {
-            throw EngineError.renderingFailed
-        }
+            guard let data = fileData else {
+                throw EngineError.renderingFailed
+            }
         
-        try data.write(to: destinationURL, options: .atomic)
+            try Task.checkCancellation()
+            try data.write(to: destinationURL, options: .atomic)
+        }.value
     }
     
     // MARK: - Histogram Computation Helper

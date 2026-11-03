@@ -1,6 +1,22 @@
 import Foundation
 import CoreGraphics
 
+/// Linear RGB neutralization sampled before creative tone/LUT/effects.
+public struct WhiteBalanceGains: Codable, Equatable {
+    public var red: CGFloat
+    public var green: CGFloat
+    public var blue: CGFloat
+}
+
+/// Optional storage keeps presets exported before light effects were introduced compatible.
+public struct LightEffects: Codable, Equatable {
+    public var halationAmount: CGFloat = 0
+    public var halationRadius: CGFloat = 12
+    public var bloomAmount: CGFloat = 0
+    public var bloomRadius: CGFloat = 35
+    public var threshold: CGFloat = 0.6
+}
+
 /// Model representing the editing state and film simulation parameters of an image.
 /// Conforms to Codable for easy JSON / XMP export and import.
 public struct FilmPreset: Codable, Equatable, Identifiable {
@@ -45,6 +61,29 @@ public struct FilmPreset: Codable, Equatable, Identifiable {
     /// Film grain noise particle size (1.0 to 3.0)
     public var grainSize: CGFloat = 1.0
     
+    public var whiteBalanceGains: WhiteBalanceGains? = nil
+    public var lightEffects: LightEffects? = nil
+    public var halationAmount: CGFloat {
+        get { lightEffects?.halationAmount ?? 0 }
+        set { if lightEffects == nil { lightEffects = LightEffects() }; lightEffects?.halationAmount = newValue }
+    }
+    public var halationRadius: CGFloat {
+        get { lightEffects?.halationRadius ?? 12 }
+        set { if lightEffects == nil { lightEffects = LightEffects() }; lightEffects?.halationRadius = newValue }
+    }
+    public var bloomAmount: CGFloat {
+        get { lightEffects?.bloomAmount ?? 0 }
+        set { if lightEffects == nil { lightEffects = LightEffects() }; lightEffects?.bloomAmount = newValue }
+    }
+    public var bloomRadius: CGFloat {
+        get { lightEffects?.bloomRadius ?? 35 }
+        set { if lightEffects == nil { lightEffects = LightEffects() }; lightEffects?.bloomRadius = newValue }
+    }
+    public var lightThreshold: CGFloat {
+        get { lightEffects?.threshold ?? 0.6 }
+        set { if lightEffects == nil { lightEffects = LightEffects() }; lightEffects?.threshold = newValue }
+    }
+
     // MARK: - Initializer
     public init(
         id: UUID = UUID(),
@@ -65,7 +104,8 @@ public struct FilmPreset: Codable, Equatable, Identifiable {
         lutFileName: String? = nil,
         lutIntensity: CGFloat = 1.0,
         grainIntensity: CGFloat = 0.0,
-        grainSize: CGFloat = 1.0
+        grainSize: CGFloat = 1.0,
+        lightEffects: LightEffects? = nil
     ) {
         self.id = id
         self.name = name
@@ -80,6 +120,7 @@ public struct FilmPreset: Codable, Equatable, Identifiable {
         self.lutIntensity = lutIntensity
         self.grainIntensity = grainIntensity
         self.grainSize = grainSize
+        self.lightEffects = lightEffects
     }
 }
 

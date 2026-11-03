@@ -6,6 +6,7 @@ public struct InspectorView: View {
     @ObservedObject var lutRegistry = LUTRegistry.shared
     
     @State private var showExportSheet = false
+    @State private var showLUTBrowser = false
     
     public init(viewModel: EditorViewModel) {
         self.viewModel = viewModel
@@ -25,6 +26,8 @@ public struct InspectorView: View {
                 Divider()
                 
                 // MARK: - 2. Basic Adjustments (WB & Exposure)
+                GeometryEditorView(viewModel: viewModel)
+                Divider()
                 basicAdjustmentsSection
                 
                 Divider()
@@ -40,6 +43,8 @@ public struct InspectorView: View {
                 Divider()
                 
                 // MARK: - 5. Film Grain Effects
+                lightEffectsSection
+                Divider()
                 filmGrainSection
                 
                 Divider()
@@ -50,6 +55,10 @@ public struct InspectorView: View {
             .padding(16)
         }
         .frame(minWidth: 280, idealWidth: 320)
+
+        .sheet(isPresented: $showLUTBrowser) {
+            LUTBrowserView(viewModel: viewModel)
+        }
         .sheet(isPresented: $showExportSheet) {
             ExportSheetView(viewModel: viewModel)
         }
@@ -67,6 +76,7 @@ public struct InspectorView: View {
                 Spacer()
                 
                 Button("Reset") {
+                    viewModel.currentPreset.whiteBalanceGains = nil
                     viewModel.currentPreset.temperature = 5500.0
                     viewModel.currentPreset.tint = 0.0
                     viewModel.currentPreset.exposure = 0.0
@@ -79,11 +89,34 @@ public struct InspectorView: View {
                 .foregroundColor(.secondary)
             }
             
+            Button { viewModel.toggleWhiteBalancePicker() } label: {
+                Label(viewModel.isPickingWhiteBalance ? "Cancel WB Picker (Esc)" : "Pick Neutral Gray / White…", systemImage: "eyedropper")
+                    .frame(maxWidth: .infinity)
+            }
+            .tint(viewModel.isPickingWhiteBalance ? .orange : .accentColor)
+            .disabled(viewModel.displayImage == nil || viewModel.isProcessing || viewModel.isSamplingWhiteBalance)
+            if viewModel.isSamplingWhiteBalance {
+                ProgressView("Measuring neutral area…").controlSize(.small)
+            }
+            if let message = viewModel.whiteBalanceMessage {
+                Text(message).font(.caption2).foregroundColor(.secondary)
+            }
+            if viewModel.currentPreset.whiteBalanceGains != nil {
+                HStack {
+                    Text("Sampled WB active").font(.caption2).foregroundColor(.secondary)
+                    Spacer()
+                    Button("Clear Sample") { viewModel.currentPreset.whiteBalanceGains = nil }.font(.caption2)
+                }
+            }
+
             // Temperature (2000K to 10000K)
             sliderRow(
                 title: "Temp",
                 valueDisplay: "\(Int(viewModel.currentPreset.temperature)) K",
-                value: $viewModel.currentPreset.temperature,
+                value: Binding(get: { viewModel.currentPreset.temperature }, set: {
+                    viewModel.currentPreset.whiteBalanceGains = nil
+                    viewModel.currentPreset.temperature = $0
+                }),
                 range: 2000...10000,
                 step: 25,
                 defaultValue: 5500
@@ -93,7 +126,10 @@ public struct InspectorView: View {
             sliderRow(
                 title: "Tint",
                 valueDisplay: String(format: "%+.0f", viewModel.currentPreset.tint),
-                value: $viewModel.currentPreset.tint,
+                value: Binding(get: { viewModel.currentPreset.tint }, set: {
+                    viewModel.currentPreset.whiteBalanceGains = nil
+                    viewModel.currentPreset.tint = $0
+                }),
                 range: -150...150,
                 step: 1,
                 defaultValue: 0
@@ -151,14 +187,22 @@ public struct InspectorView: View {
                     .foregroundColor(.secondary)
                 Spacer()
                 
-                Button(action: importCustomLUT) {
-                    Label("Import .cube", systemImage: "plus.circle")
-                        .font(.caption2)
+                Menu {
+                    Button("Import & Apply LUT Only…") { importCustomLUT(keepEdits: false) }
+                    Button("Import LUT, Keep Current Edits…") { importCustomLUT(keepEdits: true) }
+                } label: {
+                    Label("Import .cube", systemImage: "plus.circle").font(.caption2)
                 }
-                .buttonStyle(.plain)
+                .menuStyle(.borderlessButton)
                 .foregroundColor(.accentColor)
             }
             
+            Button { showLUTBrowser = true } label: {
+                Label("Browse LUT Previews…", systemImage: "square.grid.2x2")
+                    .frame(maxWidth: .infinity)
+            }
+            .disabled(viewModel.displayImage == nil)
+
             // LUT Picker
             VStack(alignment: .leading, spacing: 4) {
                 Picker("Look", selection: Binding(
@@ -175,7 +219,10 @@ public struct InspectorView: View {
             }
             
             // LUT Intensity Slider (0.0 to 1.0)
-            if viewModel.currentPreset.lutFileName != nil {
+            if let fileName = viewModel.currentPreset.lutFileName {
+                Button("Reset Color & Apply LUT at 100%") { viewModel.applyLUTOnly(fileName) }
+                    .font(.caption2)
+                    .help("Clear WB, exposure, tone curve and grain; keep crop and rotation")
                 sliderRow(
                     title: "Intensity",
                     valueDisplay: "\(Int(viewModel.currentPreset.lutIntensity * 100))%",
@@ -188,6 +235,35 @@ public struct InspectorView: View {
         }
     }
     
+    private var lightEffectsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("HALATION & BLOOM").font(.caption2).fontWeight(.semibold).foregroundColor(.secondary)
+                Spacer()
+                Button("Reset") { viewModel.currentPreset.lightEffects = nil }.font(.caption2)
+            }
+            Text("Warm halos around highlights, plus soft light diffusion.")
+                .font(.caption2).foregroundColor(.secondary)
+            sliderRow(title: "Halation", valueDisplay: "\(Int(viewModel.currentPreset.halationAmount * 100))%",
+                      value: $viewModel.currentPreset.halationAmount, range: 0...1, step: 0.01, defaultValue: 0)
+            if viewModel.currentPreset.halationAmount > 0 {
+                sliderRow(title: "Halo Spread", valueDisplay: String(format: "%.0f", viewModel.currentPreset.halationRadius),
+                          value: $viewModel.currentPreset.halationRadius, range: 1...80, step: 1, defaultValue: 12)
+            }
+            sliderRow(title: "Bloom", valueDisplay: "\(Int(viewModel.currentPreset.bloomAmount * 100))%",
+                      value: $viewModel.currentPreset.bloomAmount, range: 0...1, step: 0.01, defaultValue: 0)
+            if viewModel.currentPreset.bloomAmount > 0 {
+                sliderRow(title: "Bloom Spread", valueDisplay: String(format: "%.0f", viewModel.currentPreset.bloomRadius),
+                          value: $viewModel.currentPreset.bloomRadius, range: 1...150, step: 1, defaultValue: 35)
+            }
+            if viewModel.currentPreset.halationAmount > 0 || viewModel.currentPreset.bloomAmount > 0 {
+                sliderRow(title: "Highlight Threshold", valueDisplay: "\(Int(viewModel.currentPreset.lightThreshold * 100))%",
+                          value: $viewModel.currentPreset.lightThreshold, range: 0.1...0.95, step: 0.01, defaultValue: 0.6)
+                Text("Lower the threshold to include more highlights.").font(.caption2).foregroundColor(.secondary)
+            }
+        }
+    }
+
     // MARK: - Film Grain Section
     private var filmGrainSection: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -293,14 +369,21 @@ public struct InspectorView: View {
     }
     
     // MARK: - Custom LUT Import
-    private func importCustomLUT() {
+    private func importCustomLUT(keepEdits: Bool) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.init(filenameExtension: "cube") ?? .data]
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         if panel.runModal() == .OK, let url = panel.url {
-            if let item = try? lutRegistry.importLUT(from: url) {
-                viewModel.currentPreset.lutFileName = item.fileName
+            do {
+                let item = try lutRegistry.importLUT(from: url)
+                if keepEdits {
+                    viewModel.currentPreset.lutFileName = item.fileName
+                } else {
+                    viewModel.applyLUTOnly(item.fileName)
+                }
+            } catch {
+                viewModel.errorMessage = "Unable to import LUT: \(error.localizedDescription)"
             }
         }
     }
